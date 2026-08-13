@@ -3,6 +3,7 @@
 // Window: 1280x800 (min 1024x640), Tokyo Night, square edges.
 
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.time.Duration
 
 plugins {
     kotlin("jvm") version "2.0.21"
@@ -35,10 +36,28 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     implementation("io.insert-koin:koin-compose:4.0.0")
     implementation("io.insert-koin:koin-core:4.0.0")
+
+    // Test deps — JUnit 5 + kotlin-test for the unit suite. We use the
+    // JVM-only `kotlin-test-junit5` artifact; no Compose UI tests yet
+    // (those would need `createDesktopComposeTestRule`).
+    testImplementation(kotlin("test"))
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
 }
 
 kotlin {
     jvmToolchain(17)
+}
+
+tasks.test {
+    useJUnitPlatform()
+    // Crypto tests take ~1s each (scrypt is slow on purpose); set a
+    // generous timeout so the suite doesn't flake on slow CI.
+    timeout.set(Duration.ofSeconds(120))
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = false
+    }
 }
 
 compose.desktop {
