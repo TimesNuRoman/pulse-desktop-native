@@ -314,6 +314,8 @@ fun main() = application {
                                 PasswordCache.clear()
                                 unlockDismissed = false
                             },
+                            modelsRepo = modelsRepo,
+                            runtimeDownloader = runtimeDownloader,
                         )
                     }
                 }

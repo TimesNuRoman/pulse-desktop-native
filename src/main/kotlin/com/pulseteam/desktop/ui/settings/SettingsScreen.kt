@@ -45,6 +45,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pulseteam.desktop.ui.common.HDivider
 import com.pulseteam.desktop.ui.common.Kbd
+import com.pulseteam.desktop.data.ai.ActiveDownload
+import com.pulseteam.desktop.data.ai.DownloadState
+import com.pulseteam.desktop.data.ai.ModelEntry
+import com.pulseteam.desktop.data.ai.ModelsRepository
+import com.pulseteam.desktop.data.ai.RuntimeDownloader
+import com.pulseteam.desktop.data.ai.RuntimeState
 import com.pulseteam.desktop.ui.common.MonoLabel
 import com.pulseteam.desktop.ui.common.StatusDot
 import com.pulseteam.desktop.data.settings.AppSettings
@@ -76,6 +82,8 @@ fun SettingsScreen(
     userEmail: String? = null,
     onSignOut: () -> Unit = {},
     onUnlockSync: () -> Unit = {},
+    modelsRepo: ModelsRepository? = null,
+    runtimeDownloader: RuntimeDownloader? = null,
 ) {
     var activeTab by remember { mutableStateOf(if (userEmail != null) SettingsTab.Account else SettingsTab.Models) }
     var dirty by remember { mutableStateOf(false) }
@@ -132,7 +140,11 @@ fun SettingsScreen(
                             onSignOut = onSignOut,
                             onUnlockSync = onUnlockSync,
                         )
-                        SettingsTab.Models -> ModelsPanel(onChange = { dirty = true })
+                        SettingsTab.Models -> ModelsPanel(
+                            onChange = { dirty = true },
+                            modelsRepo = modelsRepo,
+                            runtimeDownloader = runtimeDownloader,
+                        )
                         SettingsTab.Routing -> RoutingPanel(onChange = { dirty = true })
                         SettingsTab.Inference -> InferencePanel(onChange = { dirty = true })
                         SettingsTab.Hotkeys -> HotkeysPanel()
@@ -335,80 +347,245 @@ private fun AccountPanel(userEmail: String?, onSignOut: () -> Unit, onUnlockSync
 }
 
 @Composable
-private fun ModelsPanel(onChange: () -> Unit) {
+private fun ModelsPanel(
+    onChange: () -> Unit,
+    modelsRepo: ModelsRepository? = null,
+    runtimeDownloader: RuntimeDownloader? = null,
+) {
     val settings by AppSettingsStore.state.collectAsState()
-    val presets = listOf(
-        ModelPreset("qwen2.5-coder:7b", "Qwen 2.5 Coder 7B · Q4_K_M · 4.6 GB", downloaded = true),
-        ModelPreset("llama3.1:8b", "Llama 3.1 8B Instruct · Q5_K_M · 5.2 GB", downloaded = true),
-        ModelPreset("mistral-nemo:12b", "Mistral NeMo 12B · Q4_K_M · 7.4 GB", downloaded = true),
-        ModelPreset("gemma3:4b", "Gemma 3 4B · Q4_K_M · 2.7 GB", downloaded = false),
-    )
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // Runtime status (compact)
+        if (runtimeDownloader != null) {
+            RuntimeStatusRow(runtimeDownloader)
+        }
+
         Text("Active model", color = PulseColors.FgDim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            presets.take(2).forEach { p ->
-                ModelCard(
-                    model = p,
-                    active = p.name == settings.activeModelId,
-                    onClick = {
-                        AppSettingsStore.update { it.copy(activeModelId = p.name) }
-                        onChange()
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-            }
+
+        if (modelsRepo == null) {
+            // Fallback: legacy hardcoded list (only if ModelsRepository wasn't passed in)
+            Text(
+                "Models catalog not loaded yet. Restart Pulse to see real state.",
+                color = PulseColors.FgDim,
+                fontSize = 11.sp,
+            )
+            return
         }
-        Spacer(Modifier.height(8.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            presets.drop(2).forEach { p ->
-                ModelCard(
-                    model = p,
-                    active = p.name == settings.activeModelId,
-                    onClick = {
-                        AppSettingsStore.update { it.copy(activeModelId = p.name) }
-                        onChange()
-                    },
-                    modifier = Modifier.weight(1f),
-                )
+
+        val entries by modelsRepo.entries().collectAsState()
+        val serverState by modelsRepo.server().collectAsState()
+
+        // List models in 2 columns
+        entries.chunked(2).forEach { rowEntries ->
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                rowEntries.forEach { entry ->
+                    ModelEntryCard(
+                        entry = entry,
+                        isActive = entry.meta.id == settings.activeModelId,
+                        isServerReady = serverState.status == com.pulseteam.desktop.data.ai.ServerStatus.Ready
+                            && entry.meta.id == serverState.modelId,
+                        modelsRepo = modelsRepo,
+                        onMakeActive = {
+                            AppSettingsStore.update { it.copy(activeModelId = entry.meta.id) }
+                            onChange()
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (rowEntries.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
 }
 
 @Composable
-private fun ModelCard(model: ModelPreset, active: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val border = if (active) PulseColors.Accent else PulseColors.Border
-    val bg = if (active) PulseColors.BgInput else PulseColors.Bg2
-    Column(
-        modifier = modifier
-            .border(1.dp, border, RectangleShape)
-            .background(bg, RectangleShape)
-            .clickable { onClick() }
-            .padding(12.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MonoLabel(model.name, color = if (active) PulseColors.Accent else PulseColors.Fg)
-            Spacer(Modifier.weight(1f))
-            if (active) {
-                Text("\u2713", color = PulseColors.Accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+private fun RuntimeStatusRow(runtime: RuntimeDownloader) {
+    val progress by runtime.progress().collectAsState()
+    val installed = runtime.isInstalled()
+
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        StatusDot(
+            color = when {
+                installed -> PulseColors.Green
+                progress.state == RuntimeState.Failed -> PulseColors.Error
+                progress.state == RuntimeState.Downloading || progress.state == RuntimeState.Extracting -> PulseColors.Warn
+                else -> PulseColors.FgDim
+            },
+            size = 8.dp,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            when {
+                installed -> "AI runtime ready"
+                progress.state == RuntimeState.Downloading -> "Downloading AI runtime… ${(progress.fraction * 100).toInt()}%"
+                progress.state == RuntimeState.Extracting -> "Extracting AI runtime…"
+                progress.state == RuntimeState.Failed -> "Runtime download failed: ${progress.error ?: "?"}"
+                else -> "AI runtime not installed"
+            },
+            color = if (installed) PulseColors.Green else PulseColors.Fg,
+            fontSize = 11.sp,
+            modifier = Modifier.weight(1f),
+        )
+        if (!installed && progress.state != RuntimeState.Downloading && progress.state != RuntimeState.Extracting) {
+            Box(
+                modifier = Modifier
+                    .background(PulseColors.Bg3, RectangleShape)
+                    .border(1.dp, PulseColors.Border, RectangleShape)
+                    .clickable { runtime.startDownload() }
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Text("Install", color = PulseColors.Fg, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             }
         }
+    }
+    if (progress.state == RuntimeState.Downloading) {
         Spacer(Modifier.height(4.dp))
-        Text(model.meta, color = PulseColors.FgDim, fontSize = 11.sp, maxLines = 1)
-        Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(if (model.downloaded) PulseColors.Green else PulseColors.Warn, size = 6.dp)
-            Spacer(Modifier.width(6.dp))
-            Text(
-                if (model.downloaded) "downloaded" else "not downloaded",
-                color = PulseColors.FgDim, fontSize = 10.sp,
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+                .background(PulseColors.Bg3, RectangleShape),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress.fraction.coerceIn(0f, 1f))
+                    .height(3.dp)
+                    .background(PulseColors.Warn, RectangleShape),
             )
         }
     }
 }
 
-private data class ModelPreset(val name: String, val meta: String, val downloaded: Boolean)
+@Composable
+private fun ModelEntryCard(
+    entry: ModelEntry,
+    isActive: Boolean,
+    isServerReady: Boolean,
+    modelsRepo: ModelsRepository,
+    onMakeActive: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var activeDownload by remember { mutableStateOf<ActiveDownload?>(null) }
+    val idleState = remember { kotlinx.coroutines.flow.MutableStateFlow(DownloadState.Idle) }
+    val idleProgress = remember { kotlinx.coroutines.flow.MutableStateFlow(com.pulseteam.desktop.data.ai.DownloadProgress(entry.meta.id, 0, 0, 0.0, 0)) }
+    val downloadState = (activeDownload?.state ?: idleState).collectAsState().value
+    val progress = (activeDownload?.progress ?: idleProgress).collectAsState().value
+
+    val border = when {
+        isServerReady -> PulseColors.Green
+        isActive && entry.installed -> PulseColors.Accent
+        entry.installed -> PulseColors.Border
+        downloadState == DownloadState.Downloading -> PulseColors.Warn
+        downloadState == DownloadState.Failed -> PulseColors.Error
+        else -> PulseColors.Border
+    }
+    val bg = when {
+        isServerReady -> PulseColors.BgInput
+        isActive && entry.installed -> PulseColors.BgInput
+        else -> PulseColors.Bg2
+    }
+
+    Column(
+        modifier = modifier
+            .border(1.dp, border, RectangleShape)
+            .background(bg, RectangleShape)
+            .clickable(enabled = entry.installed) { onMakeActive() }
+            .padding(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            MonoLabel(entry.meta.displayName, color = if (isServerReady) PulseColors.Green else if (isActive) PulseColors.Accent else PulseColors.Fg)
+            Spacer(Modifier.weight(1f))
+            when {
+                isServerReady -> Text("●", color = PulseColors.Green, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                isActive -> Text("✓", color = PulseColors.Accent, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                else -> {}
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "${entry.meta.quant} · ${entry.meta.sizeBytes / 1_000_000} MB · RAM ${entry.meta.minRamGb} GB",
+            color = PulseColors.FgDim,
+            fontSize = 10.sp,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            when {
+                isServerReady -> {
+                    StatusDot(PulseColors.Green, size = 6.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text("running", color = PulseColors.Green, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
+                entry.installed -> {
+                    StatusDot(PulseColors.Green, size = 6.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text("installed · click to activate", color = PulseColors.FgDim, fontSize = 10.sp)
+                }
+                downloadState == DownloadState.Downloading -> {
+                    StatusDot(PulseColors.Warn, size = 6.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "downloading ${(progress.fraction * 100).toInt()}% · ${progress.speedMBps.toInt()} MB/s",
+                        color = PulseColors.Warn,
+                        fontSize = 10.sp,
+                    )
+                }
+                downloadState == DownloadState.Failed -> {
+                    Box(
+                        modifier = Modifier
+                            .background(PulseColors.Error, RectangleShape)
+                            .clickable { activeDownload = modelsRepo.startDownload(entry.meta) }
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text("Retry", color = PulseColors.Bg, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                else -> {
+                    Box(
+                        modifier = Modifier
+                            .background(PulseColors.Accent, RectangleShape)
+                            .clickable { activeDownload = modelsRepo.startDownload(entry.meta) }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text("Download", color = PulseColors.Bg, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+        // Progress bar
+        if (downloadState == DownloadState.Downloading) {
+            Spacer(Modifier.height(4.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .background(PulseColors.Bg3, RectangleShape),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress.fraction.coerceIn(0f, 1f))
+                        .height(3.dp)
+                        .background(PulseColors.Warn, RectangleShape),
+                )
+            }
+        }
+        // Delete button for installed models (if not active)
+        if (entry.installed && !isActive) {
+            Spacer(Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .background(PulseColors.Bg3, RectangleShape)
+                    .border(1.dp, PulseColors.Border, RectangleShape)
+                    .clickable { modelsRepo.deleteInstalled(entry.meta) }
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            ) {
+                Text("Delete", color = PulseColors.FgDim, fontSize = 10.sp)
+            }
+        }
+    }
+}
 
 @Composable
 private fun RoutingPanel(onChange: () -> Unit) {
