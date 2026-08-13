@@ -36,6 +36,7 @@ import com.pulseteam.desktop.data.auth.PasswordCache
 import com.pulseteam.desktop.data.log.PulseLogger
 import com.pulseteam.desktop.data.notes.NoteLink
 import com.pulseteam.desktop.data.notes.NoteRepository
+import com.pulseteam.desktop.data.skills.SkillRepository
 import com.pulseteam.desktop.data.sync.SyncEngine
 import com.pulseteam.desktop.data.voice.WhisperTranscriber
 import com.pulseteam.desktop.data.web.WebSearch
@@ -49,6 +50,7 @@ import com.pulseteam.desktop.ui.notes.NotesViewModel
 import com.pulseteam.desktop.ui.onboarding.OnboardingScreen
 import com.pulseteam.desktop.ui.palette.CommandPalette
 import com.pulseteam.desktop.ui.settings.SettingsScreen
+import com.pulseteam.desktop.ui.skills.SkillsScreen
 import com.pulseteam.desktop.ui.theme.PulseColors
 import com.pulseteam.desktop.ui.theme.PulseTheme
 import kotlinx.coroutines.launch
@@ -128,11 +130,18 @@ fun main() = application {
     val openNote by notesViewModel.openNote.collectAsState()
     val backlinks by notesViewModel.backlinks.collectAsState()
 
-    val chatViewModel = remember(notesViewModel, aiEngine) {
+    // Skills repository. Auto-loads ~/.pulse/skills.json on first read.
+    // Seeded with two example skills on a fresh install so the user
+    // sees how the feature works.
+    val skillRepo = remember { SkillRepository() }
+    var skillsOpen by remember { mutableStateOf(false) }
+
+    val chatViewModel = remember(notesViewModel, aiEngine, skillRepo) {
         ChatViewModel(
             engine = aiEngine,
             webSearch = WebSearch(),
             isWebSearchEnabled = { isWebSearchOn },
+            skillRepo = skillRepo,
             onNotesCreated = { links: List<NoteLink> ->
                 links.forEach { link ->
                     notesViewModel.createFromChat(link.title, link.body ?: "")
@@ -335,6 +344,8 @@ fun main() = application {
                                 when (action) {
                                     is com.pulseteam.desktop.ui.palette.PaletteAction.OpenSettings ->
                                         settingsOpen = true
+                                    is com.pulseteam.desktop.ui.palette.PaletteAction.OpenSkills ->
+                                        skillsOpen = true
                                     is com.pulseteam.desktop.ui.palette.PaletteAction.NewChat ->
                                         selectedChatId = "chat-${System.currentTimeMillis()}"
                                     is com.pulseteam.desktop.ui.palette.PaletteAction.NewNote ->
@@ -361,6 +372,13 @@ fun main() = application {
                             modelsRepo = modelsRepo,
                             runtimeDownloader = runtimeDownloader,
                             whisper = whisper,
+                        )
+                    }
+
+                    if (skillsOpen) {
+                        SkillsScreen(
+                            repository = skillRepo,
+                            onDismiss = { skillsOpen = false },
                         )
                     }
                 }

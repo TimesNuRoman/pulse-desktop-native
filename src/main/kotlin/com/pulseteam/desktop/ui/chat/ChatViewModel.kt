@@ -18,6 +18,8 @@ import com.pulseteam.desktop.data.ai.AiEngine
 import com.pulseteam.desktop.data.ai.LocalMockEngine
 import com.pulseteam.desktop.data.notes.NoteLink
 import com.pulseteam.desktop.data.notes.NoteLinkParser
+import com.pulseteam.desktop.data.skills.Skill
+import com.pulseteam.desktop.data.skills.SkillRepository
 import com.pulseteam.desktop.data.web.WebSearch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,9 @@ class ChatViewModel(
     private val webSearch: WebSearch? = null,
     /** Read fresh at send time so UI toggle state stays in sync. */
     private val isWebSearchEnabled: () -> Boolean = { false },
+    /** Optional skill repository. When present, skills whose triggers match
+     *  the user message are injected as system context before streamReply. */
+    private val skillRepo: SkillRepository? = null,
     /** Called with parsed [[note links]] from each completed AI response. */
     private val onNotesCreated: (List<NoteLink>) -> Unit = {},
 ) {
@@ -67,17 +72,33 @@ class ChatViewModel(
         streamJob?.cancel()
         streamJob = scope.launch {
             try {
+                // Skills: match the trimmed user message against all
+                // configured skills and prepend any triggered bodies to
+                // the prompt. We only auto-activate on the user message
+                // — the AI's own responses never trigger new skills.
+                var prompt = trimmed
+                val triggered: List<Skill> = skillRepo?.matching(trimmed) ?: emptyList()
+                if (triggered.isNotEmpty()) {
+                    val ctx = buildString {
+                        triggered.forEach { s ->
+                            append("--- Skill: ").append(s.name).append(" ---\n")
+                            append(s.body).append("\n\n")
+                        }
+                    }
+                    prompt = "$ctx$trimmed"
+                    triggered.forEach { skillRepo?.recordUse(it.id, trimmed, autoTriggered = true) }
+                }
+
                 // Web search: optional, runs only if both a WebSearch is wired
                 // AND the user has the toggle ON at send time. We augment the
                 // prompt in place — the displayed user message stays the
                 // original text (so the chat log doesn't get noisy).
-                var prompt = trimmed
                 if (webSearch != null && isWebSearchEnabled()) {
                     _webStatus.value = "Searching the web…"
                     val results = webSearch.search(trimmed)
                     if (results.isNotEmpty()) {
                         val ctx = webSearch.formatForLlm(results, trimmed)
-                        prompt = "$ctx\n\n$trimmed"
+                        prompt = "$prompt\n\n$ctx"
                         _webStatus.value = "Web: ${results.size} result${if (results.size == 1) "" else "s"}"
                     } else {
                         _webStatus.value = "Web: no results"
