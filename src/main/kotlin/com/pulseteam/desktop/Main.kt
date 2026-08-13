@@ -37,6 +37,7 @@ import com.pulseteam.desktop.data.log.PulseLogger
 import com.pulseteam.desktop.data.notes.NoteLink
 import com.pulseteam.desktop.data.notes.NoteRepository
 import com.pulseteam.desktop.data.sync.SyncEngine
+import com.pulseteam.desktop.data.voice.WhisperTranscriber
 import com.pulseteam.desktop.data.web.WebSearch
 import com.pulseteam.desktop.ui.auth.AuthScreen
 import com.pulseteam.desktop.ui.auth.PasswordDialog
@@ -140,6 +141,12 @@ fun main() = application {
         )
     }
 
+    // Whisper transcriber for voice input. Lazily downloads whisper-cli
+    // and the ggml-tiny model on first use; the user sees a status
+    // message while the binary or model comes down. After that, every
+    // voice click is a synchronous call into whisper.cpp.
+    val whisper = remember { WhisperTranscriber() }
+
     LaunchedEffect(Unit) {
         NoteRepository.list()
         notesViewModel.refresh()
@@ -209,12 +216,29 @@ fun main() = application {
                             isWebSearchOn = isWebSearchOn,
                             onToggleVoice = { want ->
                                 isListening = want
-                                val audio = if (want) pickAudioFile() else null
-                                lastEvent = if (audio != null) {
-                                    "Voice: attached ${audio.name} (transcription: stub for MVP — Whisper.cpp wires up in v0.8)"
-                                } else if (want) {
-                                    "Voice: cancelled"
-                                } else "Voice: stopped"
+                                if (want) {
+                                    val audio = pickAudioFile()
+                                    if (audio == null) {
+                                        lastEvent = "Voice: cancelled"
+                                    } else {
+                                        lastEvent = "Voice: transcribing ${audio.name}…"
+                                        scope.launch {
+                                            val transcript = whisper.transcribe(
+                                                audio,
+                                                listener = { phase, frac, msg ->
+                                                    if (msg != null) lastEvent = "Voice: $msg"
+                                                },
+                                            )
+                                            lastEvent = if (transcript != null) {
+                                                "Voice: \"${transcript.take(80)}\""
+                                            } else {
+                                                "Voice: failed (see ~/.pulse/logs/whisper-cli.log)"
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    lastEvent = "Voice: stopped"
+                                }
                             },
                             onAttachFile = {
                                 val f = pickAnyFile()
@@ -253,12 +277,29 @@ fun main() = application {
                             isWebSearchOn = isWebSearchOn,
                             onToggleVoice = { want ->
                                 isListening = want
-                                val audio = if (want) pickAudioFile() else null
-                                lastEvent = if (audio != null) {
-                                    "Voice: attached ${audio.name} (transcription: stub for MVP — Whisper.cpp wires up in v0.8)"
-                                } else if (want) {
-                                    "Voice: cancelled"
-                                } else "Voice: stopped"
+                                if (want) {
+                                    val audio = pickAudioFile()
+                                    if (audio == null) {
+                                        lastEvent = "Voice: cancelled"
+                                    } else {
+                                        lastEvent = "Voice: transcribing ${audio.name}…"
+                                        scope.launch {
+                                            val transcript = whisper.transcribe(
+                                                audio,
+                                                listener = { phase, frac, msg ->
+                                                    if (msg != null) lastEvent = "Voice: $msg"
+                                                },
+                                            )
+                                            lastEvent = if (transcript != null) {
+                                                "Voice: \"${transcript.take(80)}\""
+                                            } else {
+                                                "Voice: failed (see ~/.pulse/logs/whisper-cli.log)"
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    lastEvent = "Voice: stopped"
+                                }
                             },
                             onAttachFile = {
                                 val f = pickAnyFile()
@@ -319,6 +360,7 @@ fun main() = application {
                             },
                             modelsRepo = modelsRepo,
                             runtimeDownloader = runtimeDownloader,
+                            whisper = whisper,
                         )
                     }
                 }

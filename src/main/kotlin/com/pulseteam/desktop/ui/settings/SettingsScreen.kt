@@ -48,6 +48,8 @@ import com.pulseteam.desktop.ui.common.Kbd
 import com.pulseteam.desktop.data.ai.ActiveDownload
 import com.pulseteam.desktop.data.ai.DownloadState
 import com.pulseteam.desktop.data.ai.ModelEntry
+import com.pulseteam.desktop.data.voice.WhisperTranscriber
+import kotlinx.coroutines.launch
 import com.pulseteam.desktop.data.ai.ModelsRepository
 import com.pulseteam.desktop.data.ai.RuntimeDownloader
 import com.pulseteam.desktop.data.ai.RuntimeState
@@ -84,6 +86,7 @@ fun SettingsScreen(
     onUnlockSync: () -> Unit = {},
     modelsRepo: ModelsRepository? = null,
     runtimeDownloader: RuntimeDownloader? = null,
+    whisper: WhisperTranscriber? = null,
 ) {
     var activeTab by remember { mutableStateOf(if (userEmail != null) SettingsTab.Account else SettingsTab.Models) }
     var dirty by remember { mutableStateOf(false) }
@@ -144,6 +147,7 @@ fun SettingsScreen(
                             onChange = { dirty = true },
                             modelsRepo = modelsRepo,
                             runtimeDownloader = runtimeDownloader,
+                            whisper = whisper,
                         )
                         SettingsTab.Routing -> RoutingPanel(onChange = { dirty = true })
                         SettingsTab.Inference -> InferencePanel(onChange = { dirty = true })
@@ -351,6 +355,7 @@ private fun ModelsPanel(
     onChange: () -> Unit,
     modelsRepo: ModelsRepository? = null,
     runtimeDownloader: RuntimeDownloader? = null,
+    whisper: WhisperTranscriber? = null,
 ) {
     val settings by AppSettingsStore.state.collectAsState()
 
@@ -358,6 +363,12 @@ private fun ModelsPanel(
         // Runtime status (compact)
         if (runtimeDownloader != null) {
             RuntimeStatusRow(runtimeDownloader)
+        }
+
+        // Voice / Whisper status (compact, in same column as runtime so
+        // the user sees "llama + whisper" both at a glance).
+        if (whisper != null) {
+            WhisperStatusRow(whisper)
         }
 
         Text("Active model", color = PulseColors.FgDim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
@@ -450,6 +461,75 @@ private fun RuntimeStatusRow(runtime: RuntimeDownloader) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(progress.fraction.coerceIn(0f, 1f))
+                    .height(3.dp)
+                    .background(PulseColors.Warn, RectangleShape),
+            )
+        }
+    }
+}
+
+@Composable
+private fun WhisperStatusRow(whisper: WhisperTranscriber) {
+    val state by whisper.state.collectAsState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    val isWorking = state.phase != com.pulseteam.desktop.data.voice.WhisperPhase.Idle
+
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        StatusDot(
+            color = when {
+                state.isReady -> PulseColors.Green
+                state.error != null -> PulseColors.Error
+                isWorking -> PulseColors.Warn
+                else -> PulseColors.FgDim
+            },
+            size = 8.dp,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            when {
+                state.isReady -> "Voice (whisper) ready"
+                state.error != null -> "Whisper error: ${state.error}"
+                state.phase == com.pulseteam.desktop.data.voice.WhisperPhase.DownloadingBinary ->
+                    "Downloading whisper.cpp… ${(state.fraction * 100).toInt()}%"
+                state.phase == com.pulseteam.desktop.data.voice.WhisperPhase.ExtractingBinary ->
+                    "Extracting whisper.cpp…"
+                state.phase == com.pulseteam.desktop.data.voice.WhisperPhase.DownloadingModel ->
+                    "Downloading whisper model (75 MB)… ${(state.fraction * 100).toInt()}%"
+                state.phase == com.pulseteam.desktop.data.voice.WhisperPhase.Transcribing ->
+                    "Transcribing…"
+                state.binaryReady && !state.modelReady -> "Voice binary ready — model pending"
+                !state.binaryReady -> "Voice not installed"
+                else -> "Voice pending"
+            },
+            color = if (state.isReady) PulseColors.Green else PulseColors.Fg,
+            fontSize = 11.sp,
+            modifier = Modifier.weight(1f),
+        )
+        if (!state.isReady && !isWorking) {
+            Box(
+                modifier = Modifier
+                    .background(PulseColors.Bg3, RectangleShape)
+                    .border(1.dp, PulseColors.Border, RectangleShape)
+                    .clickable { scope.launch { whisper.prepare() } }
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Text("Install", color = PulseColors.Fg, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+    if (isWorking && (state.phase == com.pulseteam.desktop.data.voice.WhisperPhase.DownloadingBinary ||
+                state.phase == com.pulseteam.desktop.data.voice.WhisperPhase.DownloadingModel)) {
+        Spacer(Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+                .background(PulseColors.Bg3, RectangleShape),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(state.fraction.coerceIn(0f, 1f))
                     .height(3.dp)
                     .background(PulseColors.Warn, RectangleShape),
             )
