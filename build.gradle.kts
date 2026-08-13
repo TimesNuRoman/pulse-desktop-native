@@ -49,5 +49,20 @@ compose.desktop {
             packageName = "Pulse"
             packageVersion = "1.0.0"
         }
+        // ProGuard / R8 rules for release packaging. Without these, R8
+        // fails with ~900 unresolved references on BouncyCastle / SLF4J /
+        // Koin reflection lookups (see proguard-rules.pro for the full
+        // breakdown). We disable optimization (kotlin-reflect breaks) but
+        // keep minification, so the .exe is meaningfully smaller than a
+        // debug-variant build.
+        buildTypes {
+            release {
+                proguard {
+                    configurationFiles.from(file("proguard-rules.pro"))
+                    obfuscate = true
+                    optimize = false
+                }
+            }
+        }
     }
 }
