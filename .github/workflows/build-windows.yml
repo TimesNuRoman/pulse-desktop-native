@@ -1,0 +1,96 @@
+name: Build Pulse Windows (.exe + .msi)
+
+# R-BuildWindows: GitHub Actions workflow for Compose Multiplatform desktop on Windows.
+# Builds NSIS installer (.exe) + Windows Installer (.msi) on windows-latest.
+#
+# Output: build/compose/binaries/main/{exe,msi}/Pulse-1.0.0.{exe,msi}
+#
+# Trigger:
+#   - manual:  Actions tab → "Build Pulse Windows" → Run workflow
+#   - auto:    every push to main (artifact valid for 90 days, 1GB max)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'src/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/build-windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build .exe + .msi on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build .exe (NSIS)
+        # packageReleaseExe → build/compose/binaries/main-release/exe/Pulse-1.0.0.exe
+        shell: bash
+        run: ./gradlew packageReleaseExe --no-daemon --stacktrace
+
+      - name: Build .msi (Windows Installer)
+        # packageReleaseMsi → build/compose/binaries/main-release/msi/Pulse-1.0.0.msi
+        # Requires WiX Toolset v3 — bundled with jpackage on Windows.
+        shell: bash
+        run: ./gradlew packageReleaseMsi --no-daemon --stacktrace
+
+      - name: Verify installers
+        shell: bash
+        run: |
+          set -e
+          EXE=$(find build/compose/binaries -name 'Pulse-*.exe' | head -n 1)
+          MSI=$(find build/compose/binaries -name 'Pulse-*.msi' | head -n 1)
+          if [ -z "$EXE" ]; then
+            echo "::error::No .exe produced"
+            ls -laR build/compose/binaries/ || true
+            exit 1
+          fi
+          if [ -z "$MSI" ]; then
+            echo "::error::No .msi produced"
+            ls -laR build/compose/binaries/ || true
+            exit 1
+          fi
+          echo "Built EXE: $EXE ($(du -h "$EXE" | cut -f1))"
+          echo "Built MSI: $MSI ($(du -h "$MSI" | cut -f1))"
+
+      - name: Upload .exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-desktop-windows-exe
+          path: build/compose/binaries/**/exe/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload .msi artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulse-desktop-windows-msi
+          path: build/compose/binaries/**/msi/*.msi
+          if-no-files-found: error
+          retention-days: 30

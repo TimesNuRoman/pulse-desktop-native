@@ -26,6 +26,7 @@ import androidx.compose.ui.window.rememberWindowState
 import com.pulseteam.desktop.data.auth.AuthApi
 import com.pulseteam.desktop.data.auth.AuthSession
 import com.pulseteam.desktop.data.auth.PasswordCache
+import com.pulseteam.desktop.data.log.PulseLogger
 import com.pulseteam.desktop.data.notes.NoteLink
 import com.pulseteam.desktop.data.notes.NoteRepository
 import com.pulseteam.desktop.data.sync.SyncEngine
@@ -33,6 +34,7 @@ import com.pulseteam.desktop.ui.auth.AuthScreen
 import com.pulseteam.desktop.ui.auth.PasswordDialog
 import com.pulseteam.desktop.ui.chat.ChatScreen
 import com.pulseteam.desktop.ui.chat.ChatViewModel
+import com.pulseteam.desktop.ui.common.ErrorBoundary
 import com.pulseteam.desktop.ui.notes.NoteEditorScreen
 import com.pulseteam.desktop.ui.notes.NotesViewModel
 import com.pulseteam.desktop.ui.palette.CommandPalette
@@ -42,6 +44,11 @@ import com.pulseteam.desktop.ui.theme.PulseTheme
 import kotlinx.coroutines.launch
 
 fun main() = application {
+    // Install JVM-wide crash handler first thing — every uncaught exception
+    // (including those that escape Compose recomposition) lands in the log.
+    PulseLogger.installCrashHandler()
+    PulseLogger.info("Pulse starting", mapOf("version" to "1.0.0-rc", "java" to System.getProperty("java.version")))
+
     val windowState = rememberWindowState(
         size = DpSize(1280.dp, 800.dp),
         position = WindowPosition.PlatformDefault,
@@ -102,6 +109,9 @@ fun main() = application {
         title = "Pulse",
     ) {
         PulseTheme {
+            ErrorBoundary(
+                onError = { PulseLogger.error("UI crashed", it) },
+            ) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -245,6 +255,7 @@ fun main() = application {
                     }
                 }
             }
+            }  // ErrorBoundary
         }
     }
 }
