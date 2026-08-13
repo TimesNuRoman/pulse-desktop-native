@@ -6,6 +6,7 @@ package com.pulseteam.desktop.ui.shell
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
+import com.pulseteam.desktop.data.update.UpdateInfo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,8 @@ fun Topbar(
     onOpenSettings: () -> Unit,
     onSyncNow: () -> Unit = {},
     lastEvent: String? = null,
+    updateInfo: UpdateInfo? = null,
+    onDownloadUpdate: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -143,6 +146,26 @@ fun Topbar(
             }
 
             Spacer(Modifier.width(12.dp))
+
+            // Update-available pill: small, unobtrusive, only when the
+            // UpdateChecker detected a newer version. Click opens the
+            // browser to the manifest's URL.
+            if (updateInfo != null && onDownloadUpdate != null) {
+                Row(
+                    modifier = Modifier
+                        .background(PulseColors.AccentSoft, RectangleShape)
+                        .border(1.dp, PulseColors.Accent, RectangleShape)
+                        .clickable { onDownloadUpdate() }
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("v${updateInfo.version} available", color = PulseColors.Accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Download", color = PulseColors.Bg, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+
             TopbarAction(
                 icon = Icons.Default.Sync,
                 contentDescription = "Sync now${if (lastEvent != null) " — $lastEvent" else ""}",

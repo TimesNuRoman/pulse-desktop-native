@@ -85,6 +85,8 @@ fun ChatScreen(
     onToggleWeb: (Boolean) -> Unit = { _ -> },
     onSyncNow: () -> Unit = {},
     lastEvent: String? = null,
+    updateInfo: com.pulseteam.desktop.data.update.UpdateInfo? = null,
+    onDownloadUpdate: (() -> Unit)? = null,
 ) {
     val messages by chatViewModel.messages.collectAsState()
     val webStatus by chatViewModel.webStatus.collectAsState()
@@ -95,6 +97,8 @@ fun ChatScreen(
             onOpenSettings = onOpenSettings,
             onSyncNow = onSyncNow,
             lastEvent = lastEvent,
+            updateInfo = updateInfo,
+            onDownloadUpdate = onDownloadUpdate,
         )
         Row(
             modifier = Modifier

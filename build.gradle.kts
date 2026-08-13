@@ -34,6 +34,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("org.xerial:sqlite-jdbc:3.45.0.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.json:json:20231013")
     implementation("io.insert-koin:koin-compose:4.0.0")
     implementation("io.insert-koin:koin-core:4.0.0")
 

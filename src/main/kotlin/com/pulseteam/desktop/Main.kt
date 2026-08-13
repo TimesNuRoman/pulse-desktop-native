@@ -38,6 +38,9 @@ import com.pulseteam.desktop.data.notes.NoteLink
 import com.pulseteam.desktop.data.notes.NoteRepository
 import com.pulseteam.desktop.data.skills.SkillRepository
 import com.pulseteam.desktop.data.sync.SyncEngine
+import com.pulseteam.desktop.data.update.UpdateChecker
+import com.pulseteam.desktop.data.update.UpdateInfo
+import com.pulseteam.desktop.data.update.UpdateStatus
 import com.pulseteam.desktop.data.voice.WhisperTranscriber
 import com.pulseteam.desktop.data.web.WebSearch
 import com.pulseteam.desktop.ui.auth.AuthScreen
@@ -135,6 +138,18 @@ fun main() = application {
     // sees how the feature works.
     val skillRepo = remember { SkillRepository() }
     var skillsOpen by remember { mutableStateOf(false) }
+
+    // Update checker. Polls ownlocalml.com/updates/windows-kotlin.json
+    // 5s after the app starts. If a newer version is published, the
+    // topbar shows a "v1.0.1 available — Download" pill. Click opens
+    // the URL in the system browser (we don't do in-place patching).
+    val updateChecker = remember { UpdateChecker() }
+    var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(5_000)  // let the app finish first frame
+        updateStatus = UpdateStatus.Checking
+        updateStatus = updateChecker.check()
+    }
 
     val chatViewModel = remember(notesViewModel, aiEngine, skillRepo) {
         ChatViewModel(
@@ -264,6 +279,11 @@ fun main() = application {
                                 }
                             },
                             lastEvent = lastEvent,
+                            updateInfo = (updateStatus as? UpdateStatus.Available)?.info,
+                            onDownloadUpdate = {
+                                val info = (updateStatus as? UpdateStatus.Available)?.info
+                                if (info != null) updateChecker.openDownload(info.url)
+                            },
                         )
                     } else {
                         ChatScreen(
@@ -325,6 +345,11 @@ fun main() = application {
                                 }
                             },
                             lastEvent = lastEvent,
+                            updateInfo = (updateStatus as? UpdateStatus.Available)?.info,
+                            onDownloadUpdate = {
+                                val info = (updateStatus as? UpdateStatus.Available)?.info
+                                if (info != null) updateChecker.openDownload(info.url)
+                            },
                             centerContent = {
                                 NoteEditorScreen(
                                     note = openNote!!,
