@@ -1,0 +1,14 @@
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\screencap.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\screencap.AssemblyInfoInputs.cache
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\screencap.AssemblyInfo.cs
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\screencap.csproj.CoreCompileInputs.cache
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\bin\Release\net8.0-windows\screencap.exe
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\bin\Release\net8.0-windows\screencap.deps.json
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\bin\Release\net8.0-windows\screencap.runtimeconfig.json
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\bin\Release\net8.0-windows\screencap.dll
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\bin\Release\net8.0-windows\screencap.pdb
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\screencap.dll
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\refint\screencap.dll
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\screencap.pdb
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\screencap.genruntimeconfig.cache
+C:\Users\1\.minimax\workspace\pulse-desktop-native\tools\screencap\obj\Release\net8.0-windows\ref\screencap.dll
