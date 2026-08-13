@@ -68,6 +68,45 @@ compose.desktop {
             targetFormats(TargetFormat.Exe, TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "Pulse"
             packageVersion = "1.0.0"
+
+            // ---------------------------------------------------------------
+            // Windows code-signing placeholder. Activated when the build
+            // host has an Authenticode .pfx available; see tools/sign-windows.ps1
+            // and docs/signing.md. Compose-jb's DSL doesn't expose jpackage's
+            // `--win-sign` flag, so we do post-build signing via signtool.exe
+            // (or sign-code if cross-platform). The block below is a no-op
+            // when PULSE_SIGN_PFX is unset.
+            // ---------------------------------------------------------------
+            windows {
+                // The compose-jb DSL does not have a first-class sign hook
+                // (jpackage does, but the plugin wraps it behind
+                // `nativeDistributions.windows { signConfig { ... } }` which
+                // is undocumented and version-dependent). Instead, we sign
+                // after `packageReleaseExe` via tools/sign-windows.ps1.
+                // See that script for the signtool.exe invocation.
+                //
+                // To activate locally:
+                //   $env:PULSE_SIGN_PFX = 'C:\keys\pulse-2026.pfx'
+                //   $env:PULSE_SIGN_PWD = (read-host -assecurestring)
+                //   $env:PULSE_SIGN_TSA = 'http://timestamp.digicert.com'
+                //   .\tools\sign-windows.ps1
+            }
+
+            // ---------------------------------------------------------------
+            // macOS notarization placeholder. Same shape as Windows:
+            // activated by env vars, runs through tools/sign-mac.sh.
+            // ---------------------------------------------------------------
+            macOS {
+                // jpackage's --mac-sign and --mac-package-signing-prefix are
+                // also not exposed by the compose-jb DSL. We do post-build
+                // signing + notarization in tools/sign-mac.sh using
+                // `codesign`, `xcrun notarytool`, and `xcrun stapler`.
+                //
+                // To activate locally:
+                //   export PULSE_MAC_SIGN_IDENTITY='Developer ID Application: Your Name (TEAMID)'
+                //   export PULSE_MAC_KEYCHAIN_PROFILE='pulse-notary'
+                //   ./tools/sign-mac.sh
+            }
         }
         // ProGuard / R8 rules for release packaging. Without these, R8
         // fails with ~900 unresolved references on BouncyCastle / SLF4J /

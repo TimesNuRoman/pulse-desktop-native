@@ -60,6 +60,32 @@ jobs:
         shell: bash
         run: ./gradlew packageReleaseMsi --no-daemon --stacktrace
 
+      # ------------------------------------------------------------------
+      # Optional Authenticode signing. Activated when these 3 GitHub
+      # secrets are set in repo Settings → Secrets:
+      #   PULSE_SIGN_PFX_B64  - the .pfx file, base64-encoded
+      #   PULSE_SIGN_PWD      - the .pfx password
+      #   PULSE_SIGN_TSA      - timestamp server URL (default: digicert)
+      # See docs/signing.md for how to create the cert.
+      # ------------------------------------------------------------------
+      - name: Decode signing cert
+        if: ${{ secrets.PULSE_SIGN_PFX_B64 != '' }}
+        shell: bash
+        run: |
+          mkdir -p keys
+          echo "${{ secrets.PULSE_SIGN_PFX_B64 }}" | base64 --decode > keys/pulse.pfx
+          ls -la keys/
+
+      - name: Sign installers (Authenticode)
+        if: ${{ secrets.PULSE_SIGN_PFX_B64 != '' && secrets.PULSE_SIGN_PWD != '' }}
+        shell: pwsh
+        env:
+          PULSE_SIGN_PFX: keys/pulse.pfx
+          PULSE_SIGN_PWD: ${{ secrets.PULSE_SIGN_PWD }}
+          PULSE_SIGN_TSA: ${{ secrets.PULSE_SIGN_TSA || 'http://timestamp.digicert.com' }}
+        run: |
+          .\tools\sign-windows.ps1
+
       - name: Verify installers
         shell: bash
         run: |
