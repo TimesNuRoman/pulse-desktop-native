@@ -23,6 +23,13 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.pulseteam.desktop.data.ai.AiEngine
+import com.pulseteam.desktop.data.ai.LlamaClient
+import com.pulseteam.desktop.data.ai.LlamaEngine
+import com.pulseteam.desktop.data.ai.LlamaServerProcess
+import com.pulseteam.desktop.data.ai.LocalMockEngine
+import com.pulseteam.desktop.data.ai.ModelsRepository
+import com.pulseteam.desktop.data.ai.RuntimeDownloader
 import com.pulseteam.desktop.data.auth.AuthApi
 import com.pulseteam.desktop.data.auth.AuthSession
 import com.pulseteam.desktop.data.auth.PasswordCache
@@ -37,11 +44,15 @@ import com.pulseteam.desktop.ui.chat.ChatViewModel
 import com.pulseteam.desktop.ui.common.ErrorBoundary
 import com.pulseteam.desktop.ui.notes.NoteEditorScreen
 import com.pulseteam.desktop.ui.notes.NotesViewModel
+import com.pulseteam.desktop.ui.onboarding.OnboardingScreen
 import com.pulseteam.desktop.ui.palette.CommandPalette
 import com.pulseteam.desktop.ui.settings.SettingsScreen
 import com.pulseteam.desktop.ui.theme.PulseColors
 import com.pulseteam.desktop.ui.theme.PulseTheme
 import kotlinx.coroutines.launch
+import java.awt.FileDialog
+import java.awt.Frame
+import java.io.File
 
 fun main() = application {
     // Install JVM-wide crash handler first thing — every uncaught exception
@@ -70,6 +81,33 @@ fun main() = application {
     val session by authSession.state.collectAsState()
     val syncState by syncEngine.state.collectAsState()
 
+    // AI engine: real llama-server with mock fallback when server can't start
+    // (no model downloaded yet, no runtime, etc.). Created once, persists.
+    val modelsRepo = remember { ModelsRepository() }
+    val runtimeDownloader = remember { RuntimeDownloader() }
+    val llamaServer = remember { LlamaServerProcess() }
+    val llamaClient = remember { LlamaClient() }
+    val aiEngine: AiEngine = remember {
+        LlamaEngine(
+            repository = modelsRepo,
+            server = llamaServer,
+            client = llamaClient,
+            fallback = LocalMockEngine(),
+        )
+    }
+    // Onboarding gate: shown until both runtime and at least one model
+    // are installed. Flips to true automatically when both ready.
+    var onboardingComplete by remember { mutableStateOf(false) }
+    val modelEntries by modelsRepo.entries().collectAsState()
+    LaunchedEffect(modelEntries) {
+        val runtimeOk = runtimeDownloader.isInstalled()
+        val modelOk = modelEntries.any { it.installed }
+        if (runtimeOk && modelOk) {
+            onboardingComplete = true
+            PulseLogger.info("Onboarding complete (runtime + model present)")
+        }
+    }
+
     val scope = rememberCoroutineScope()
 
     var paletteOpen by remember { mutableStateOf(false) }
@@ -88,8 +126,9 @@ fun main() = application {
     val openNote by notesViewModel.openNote.collectAsState()
     val backlinks by notesViewModel.backlinks.collectAsState()
 
-    val chatViewModel = remember(notesViewModel) {
+    val chatViewModel = remember(notesViewModel, aiEngine) {
         ChatViewModel(
+            engine = aiEngine,
             onNotesCreated = { links: List<NoteLink> ->
                 links.forEach { link ->
                     notesViewModel.createFromChat(link.title, link.body ?: "")
@@ -101,6 +140,12 @@ fun main() = application {
     LaunchedEffect(Unit) {
         NoteRepository.list()
         notesViewModel.refresh()
+        // Auto-trigger runtime download if missing (saves the user a click
+        // on first run, but they still need to manually pick a model).
+        if (!runtimeDownloader.isInstalled()) {
+            PulseLogger.info("Auto-starting runtime download on first launch")
+            runtimeDownloader.startDownload()
+        }
     }
 
     Window(
@@ -117,7 +162,13 @@ fun main() = application {
                     .fillMaxSize()
                     .background(PulseColors.Bg),
             ) {
-                if (session == null) {
+                if (!onboardingComplete) {
+                    OnboardingScreen(
+                        repository = modelsRepo,
+                        runtime = runtimeDownloader,
+                        onReady = { onboardingComplete = true },
+                    )
+                } else if (session == null) {
                     AuthScreen(
                         session = authSession,
                         api = authApi,
@@ -155,14 +206,20 @@ fun main() = application {
                             isWebSearchOn = isWebSearchOn,
                             onToggleVoice = { want ->
                                 isListening = want
-                                lastEvent = if (want) "Voice: recording… (Whisper.cpp wires up in v0.5)"
-                                            else "Voice: stopped"
+                                val audio = if (want) pickAudioFile() else null
+                                lastEvent = if (audio != null) {
+                                    "Voice: attached ${audio.name} (transcription: stub for MVP — Whisper.cpp wires up in v0.8)"
+                                } else if (want) {
+                                    "Voice: cancelled"
+                                } else "Voice: stopped"
                             },
-                            onAttachFile = { lastEvent = "Attach: file picker opens in v0.5" },
+                            onAttachFile = {
+                                val f = pickAnyFile()
+                                lastEvent = if (f != null) "Attached: ${f.name} (${f.length() / 1024} KB)" else "Attach cancelled"
+                            },
                             onToggleWeb = { want ->
                                 isWebSearchOn = want
-                                lastEvent = if (want) "Web search: ON (uses /v1/web/search when b\u0252ck ready)"
-                                            else "Web search: OFF"
+                                lastEvent = if (want) "Web search: ON" else "Web search: OFF"
                             },
                             onSyncNow = {
                                 scope.launch {
@@ -193,14 +250,20 @@ fun main() = application {
                             isWebSearchOn = isWebSearchOn,
                             onToggleVoice = { want ->
                                 isListening = want
-                                lastEvent = if (want) "Voice: recording… (Whisper.cpp wires up in v0.5)"
-                                            else "Voice: stopped"
+                                val audio = if (want) pickAudioFile() else null
+                                lastEvent = if (audio != null) {
+                                    "Voice: attached ${audio.name} (transcription: stub for MVP — Whisper.cpp wires up in v0.8)"
+                                } else if (want) {
+                                    "Voice: cancelled"
+                                } else "Voice: stopped"
                             },
-                            onAttachFile = { lastEvent = "Attach: file picker opens in v0.5" },
+                            onAttachFile = {
+                                val f = pickAnyFile()
+                                lastEvent = if (f != null) "Attached: ${f.name} (${f.length() / 1024} KB)" else "Attach cancelled"
+                            },
                             onToggleWeb = { want ->
                                 isWebSearchOn = want
-                                lastEvent = if (want) "Web search: ON (uses /v1/web/search when b\u0252ck ready)"
-                                            else "Web search: OFF"
+                                lastEvent = if (want) "Web search: ON" else "Web search: OFF"
                             },
                             onSyncNow = {
                                 scope.launch {
@@ -257,5 +320,44 @@ fun main() = application {
             }
             }  // ErrorBoundary
         }
+    }
+}
+
+/** Open a native file picker, return selected File or null on cancel. */
+private fun pickAnyFile(): File? {
+    return try {
+        val dlg = FileDialog(null as java.awt.Frame?, "Attach file", FileDialog.LOAD)
+        dlg.isVisible = true
+        val dir = dlg.directory
+        val name = dlg.file
+        if (dir != null && name != null) File(dir, name) else null
+    } catch (t: Throwable) {
+        PulseLogger.warn("File picker failed", mapOf("err" to t.message))
+        null
+    }
+}
+
+/** Open a native file picker filtered to common audio extensions. */
+private fun pickAudioFile(): File? {
+    return try {
+        // java.awt.FileDialog doesn't support extension filters on all
+        // platforms, but the dialog naturally shows supported formats. We
+        // do a manual post-filter.
+        val dlg = FileDialog(null as java.awt.Frame?, "Attach audio", FileDialog.LOAD)
+        dlg.isVisible = true
+        val dir = dlg.directory
+        val name = dlg.file
+        val file = if (dir != null && name != null) File(dir, name) else null
+        if (file != null) {
+            val ext = file.extension.lowercase()
+            val supported = setOf("wav", "mp3", "m4a", "ogg", "flac", "opus", "webm", "mp4")
+            if (ext !in supported) {
+                PulseLogger.warn("Audio file has unsupported extension", mapOf("file" to file.name, "ext" to ext))
+                null
+            } else file
+        } else null
+    } catch (t: Throwable) {
+        PulseLogger.warn("Audio picker failed", mapOf("err" to t.message))
+        null
     }
 }
