@@ -87,6 +87,7 @@ fun ChatScreen(
     lastEvent: String? = null,
 ) {
     val messages by chatViewModel.messages.collectAsState()
+    val webStatus by chatViewModel.webStatus.collectAsState()
 
     Column(modifier = modifier.fillMaxSize()) {
         Topbar(
@@ -124,6 +125,7 @@ fun ChatScreen(
                     onToggleWeb = onToggleWeb,
                     isListening = isListening,
                     isWebSearchOn = isWebSearchOn,
+                    webStatus = webStatus,
                 )
             }
             RightPanel(
@@ -166,6 +168,7 @@ private fun ChatPane(
     onToggleWeb: (Boolean) -> Unit = { _ -> },
     isListening: Boolean = false,
     isWebSearchOn: Boolean = false,
+    webStatus: String? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -213,7 +216,15 @@ private fun ChatPane(
         HDivider()
 
         // Composer
-        Composer(onSend = onSend)
+        Composer(
+            onSend = onSend,
+            onToggleVoice = onToggleVoice,
+            onAttachFile = onAttachFile,
+            onToggleWeb = onToggleWeb,
+            isListening = isListening,
+            isWebSearchOn = isWebSearchOn,
+            webStatus = webStatus,
+        )
     }
 }
 
@@ -287,6 +298,7 @@ private fun Composer(
     onToggleWeb: (Boolean) -> Unit = { _ -> },
     isListening: Boolean = false,
     isWebSearchOn: Boolean = false,
+    webStatus: String? = null,
 ) {
     var text by remember { mutableStateOf(TextFieldValue("")) }
     Column(
@@ -368,10 +380,28 @@ private fun Composer(
             }
         }
         Spacer(Modifier.height(6.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Shift+↵ newline", color = PulseColors.FgDim, fontSize = 10.sp)
             Text("/ commands", color = PulseColors.FgDim, fontSize = 10.sp)
             Text("@ mention note", color = PulseColors.FgDim, fontSize = 10.sp)
+            if (webStatus != null) {
+                // Compact pill that shows live web-search status. Renders
+                // between the hint text and the right-aligned note.
+                Row(
+                    modifier = Modifier
+                        .background(PulseColors.AccentSoft, RectangleShape)
+                        .border(1.dp, PulseColors.Accent, RectangleShape)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        webStatus,
+                        color = PulseColors.Accent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
             Spacer(Modifier.weight(1f))
             Text("Your password is the encryption key", color = PulseColors.FgDisabled, fontSize = 10.sp)
         }

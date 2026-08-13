@@ -37,6 +37,7 @@ import com.pulseteam.desktop.data.log.PulseLogger
 import com.pulseteam.desktop.data.notes.NoteLink
 import com.pulseteam.desktop.data.notes.NoteRepository
 import com.pulseteam.desktop.data.sync.SyncEngine
+import com.pulseteam.desktop.data.web.WebSearch
 import com.pulseteam.desktop.ui.auth.AuthScreen
 import com.pulseteam.desktop.ui.auth.PasswordDialog
 import com.pulseteam.desktop.ui.chat.ChatScreen
@@ -129,6 +130,8 @@ fun main() = application {
     val chatViewModel = remember(notesViewModel, aiEngine) {
         ChatViewModel(
             engine = aiEngine,
+            webSearch = WebSearch(),
+            isWebSearchEnabled = { isWebSearchOn },
             onNotesCreated = { links: List<NoteLink> ->
                 links.forEach { link ->
                     notesViewModel.createFromChat(link.title, link.body ?: "")
