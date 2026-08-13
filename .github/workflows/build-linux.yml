@@ -65,17 +65,20 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build .deb
-        # packageDeb is the dedicated Gradle task the Compose plugin creates for Deb target.
-        # Output: build/compose/binaries/main/deb/Pulse-1.0.0.deb
-        run: ./gradlew packageDeb --no-daemon --stacktrace
+        # Compose Multiplatform: `packageDeb` (debug) or `packageReleaseDeb` (release).
+        # Release path outputs to build/compose/binaries/main-release/deb/*.deb
+        # Debug path outputs to build/compose/binaries/main/deb/*.deb
+        # We're shipping to users, so release it is.
+        # Per JetBrains/compose-multiplatform#4622 the .deb lives in build/compose/binaries/**/*.deb.
+        run: ./gradlew packageReleaseDeb --no-daemon --stacktrace
 
       - name: Verify .deb
         run: |
           set -e
-          DEB=$(find build/compose/binaries/main/deb -name '*.deb' | head -n 1)
+          DEB=$(find build/compose/binaries -name '*.deb' -path '*/deb/*' | head -n 1)
           if [ -z "$DEB" ]; then
             echo "::error::No .deb produced"
-            ls -la build/compose/binaries/main/ || true
+            ls -laR build/compose/binaries/ || true
             exit 1
           fi
           echo "Built: $DEB"
@@ -86,6 +89,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pulse-desktop-deb
-          path: build/compose/binaries/main/deb/*.deb
+          path: build/compose/binaries/**/deb/*.deb
           if-no-files-found: error
           retention-days: 30

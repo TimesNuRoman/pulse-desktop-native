@@ -1,0 +1,36 @@
+# Pulse Desktop — Linux .deb build image
+# Use from project root:
+#   docker build -f Dockerfile.build-deb -t pulse-builder .
+#   docker run --rm -v ${PWD}:/src -v ${PWD}/dist:/dist pulse-builder
+
+FROM eclipse-temurin:17-jdk-jammy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Compose Multiplatform runtime deps (Skiko + jpackage DebBundler).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        fakeroot \
+        dpkg \
+        binutils \
+        libfreetype6 \
+        libfontconfig1 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Pre-warm Gradle cache by running help (downloads wrapper + plugin metadata).
+# Subsequent builds reuse the layer.
+COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
+COPY gradle ./gradle
+RUN ./gradlew --version --no-daemon > /dev/null 2>&1 || true
+
+# Build
+COPY . .
+RUN chmod +x ./gradlew && \
+    ./gradlew packageDeb --no-daemon --stacktrace && \
+    mkdir -p /dist && \
+    cp build/compose/binaries/main/deb/*.deb /dist/ 2>/dev/null || \
+        (echo "::error::No .deb produced" && ls -la build/compose/binaries/main/ && exit 1)
+
+# /dist is a mounted volume; output lands there on `docker run`.
