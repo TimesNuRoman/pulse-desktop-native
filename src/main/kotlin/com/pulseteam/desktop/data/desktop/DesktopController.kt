@@ -157,6 +157,63 @@ class DesktopController(
         safety.cancel()
     }
 
+    /**
+     * Propose typing [text] into the currently-focused control. Always
+     * routes through the SafetyGate (the user must confirm before text
+     * is sent).
+     */
+    suspend fun proposeTypeText(text: String): ProposeResult = withContext(Dispatchers.IO) {
+        if (!pc.isAvailable()) {
+            return@withContext ProposeResult.Unavailable("PC interaction unavailable (no Robot)")
+        }
+        if (text.isEmpty()) {
+            return@withContext ProposeResult.Unavailable("Type: empty text")
+        }
+        val summary = "Type ${text.length} character${if (text.length == 1) "" else "s"}: \"${text.take(80)}${if (text.length > 80) "…" else ""}\""
+        val allowed = safety.request(DesktopAction.Type(text), summary)
+        if (allowed) {
+            executeAction(DesktopAction.Type(text))
+            ProposeResult.Executed(summary)
+        } else {
+            // Pass a non-existent file path; the dialog checks `exists()`
+            // before rendering the preview. The user sees the summary
+            // text only (no screenshot), which is correct for type.
+            ProposeResult.NeedsConfirmation(
+                summary = summary,
+                previewPath = File(capturesDir, "_type-no-preview.png"),
+                x = 0,
+                y = 0,
+            )
+        }
+    }
+
+    /**
+     * Propose pressing a hotkey chord (e.g. "Ctrl+Shift+S"). Always
+     * routes through the SafetyGate. The [combo] string is parsed by
+     * [parseHotkey] into a list of VK codes.
+     */
+    suspend fun proposePressHotkey(combo: String): ProposeResult = withContext(Dispatchers.IO) {
+        if (!pc.isAvailable()) {
+            return@withContext ProposeResult.Unavailable("PC interaction unavailable (no Robot)")
+        }
+        val codes = parseHotkey(combo) ?: return@withContext ProposeResult.Unavailable(
+            "Unrecognised hotkey: \"$combo\". Try Ctrl+Shift+S, alt+f4, Enter, etc."
+        )
+        val summary = "Press hotkey: ${renderHotkey(codes)}"
+        val allowed = safety.request(DesktopAction.Hotkey(codes), summary)
+        if (allowed) {
+            executeAction(DesktopAction.Hotkey(codes))
+            ProposeResult.Executed(summary)
+        } else {
+            ProposeResult.NeedsConfirmation(
+                summary = summary,
+                previewPath = File(capturesDir, "_hotkey-no-preview.png"),
+                x = 0,
+                y = 0,
+            )
+        }
+    }
+
     private fun executeAction(action: DesktopAction) {
         when (action) {
             is DesktopAction.Click -> pc.click(action.x, action.y, action.button)

@@ -70,7 +70,7 @@ fun ChatScreen(
     onNewNote: () -> Unit = {},
     onOpenNoteByTitle: (String) -> Unit = {},
     centerContent: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null,
-    chatViewModel: ChatViewModel = remember { ChatViewModel() },
+    chatViewModel: ChatViewModel,
     userEmail: String? = null,
     syncStatus: com.pulseteam.desktop.data.sync.SyncState = com.pulseteam.desktop.data.sync.SyncState(),
     onSignOut: () -> Unit = {},

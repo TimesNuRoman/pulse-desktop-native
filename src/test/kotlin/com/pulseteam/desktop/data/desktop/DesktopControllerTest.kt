@@ -145,4 +145,70 @@ class DesktopControllerTest {
         val executed = runBlocking { ctrl.executeApproved() }
         assertEquals(false, executed)
     }
+
+    @Test
+    fun `proposeTypeText populates pending with the typed text summary`(@TempDir tmp: Path) {
+        val (ctrl, safety, pc) = controller(match = ScreenMatch(found = false), tempDir = tmp)
+        val r = runBlocking { ctrl.proposeTypeText("hello world") }
+        assertTrue(r is ProposeResult.NeedsConfirmation, "expected NeedsConfirmation, got $r")
+        val nc = r as ProposeResult.NeedsConfirmation
+        assertTrue(nc.summary.contains("hello world"))
+        assertTrue(nc.summary.contains("11 character"))
+        // SafetyGate has a pending action with the text
+        val pending = safety.state.value.pending
+        assertNotNull(pending)
+        assertTrue(pending!!.action is DesktopAction.Type)
+        assertEquals("hello world", (pending.action as DesktopAction.Type).text)
+        // Nothing was typed yet
+        assertTrue(pc.calls.isEmpty(), "no input should fire before confirm")
+    }
+
+    @Test
+    fun `proposeTypeText with empty input returns Unavailable`(@TempDir tmp: Path) {
+        val (ctrl, safety, _) = controller(match = ScreenMatch(found = false), tempDir = tmp)
+        val r = runBlocking { ctrl.proposeTypeText("") }
+        assertTrue(r is ProposeResult.Unavailable)
+        assertNull(safety.state.value.pending)
+    }
+
+    @Test
+    fun `proposePressHotkey populates pending with the parsed chord`(@TempDir tmp: Path) {
+        val (ctrl, safety, pc) = controller(match = ScreenMatch(found = false), tempDir = tmp)
+        val r = runBlocking { ctrl.proposePressHotkey("Ctrl+Shift+S") }
+        assertTrue(r is ProposeResult.NeedsConfirmation, "expected NeedsConfirmation, got $r")
+        val nc = r as ProposeResult.NeedsConfirmation
+        assertTrue(nc.summary.contains("Ctrl+Shift+S"))
+        val pending = safety.state.value.pending
+        assertNotNull(pending)
+        assertTrue(pending!!.action is DesktopAction.Hotkey)
+        assertEquals(
+            listOf(java.awt.event.KeyEvent.VK_CONTROL, java.awt.event.KeyEvent.VK_SHIFT, java.awt.event.KeyEvent.VK_S),
+            (pending.action as DesktopAction.Hotkey).keyCodes,
+        )
+        // Nothing was pressed yet
+        assertTrue(pc.calls.isEmpty())
+    }
+
+    @Test
+    fun `proposePressHotkey with invalid combo returns Unavailable`(@TempDir tmp: Path) {
+        val (ctrl, safety, _) = controller(match = ScreenMatch(found = false), tempDir = tmp)
+        val r = runBlocking { ctrl.proposePressHotkey("Ctrl+Bogus") }
+        assertTrue(r is ProposeResult.Unavailable, "expected Unavailable, got $r")
+        assertTrue((r as ProposeResult.Unavailable).reason.contains("Ctrl+Bogus"))
+        assertNull(safety.state.value.pending)
+    }
+
+    @Test
+    fun `executeApproved for Type fires typeText calls on the FakePcController`(@TempDir tmp: Path) {
+        val (ctrl, safety, pc) = controller(match = ScreenMatch(found = false), tempDir = tmp)
+        runBlocking { ctrl.proposeTypeText("hi") }
+        val executed = runBlocking { ctrl.executeApproved() }
+        assertTrue(executed)
+        // typeText records press+release per char → 2 calls for "h" + 2 for "i" = 4.
+        assertEquals(4, pc.calls.size)
+        // Both characters' press events are present.
+        val pressedChars = pc.calls.filter { it.op == "press" }.mapNotNull { it.args["char"] as? String }
+        assertEquals(listOf("h", "i"), pressedChars)
+        assertNull(safety.state.value.pending)
+    }
 }

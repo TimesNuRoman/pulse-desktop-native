@@ -74,6 +74,17 @@ sealed class PaletteAction {
      * to approve the click. Main.kt handles the inline input prompt.
      */
     data class ClickOnText(val target: String) : PaletteAction()
+    /**
+     * Type [text] char-by-char into the currently-focused control.
+     * Routed through SafetyGate so every action shows the confirm dialog.
+     */
+    data class TypeText(val text: String) : PaletteAction()
+    /**
+     * Press a key chord (e.g. "Ctrl+Shift+S"). [combo] is parsed by
+     * HotkeyParser; invalid combos are rejected by the inline dialog.
+     * Routed through SafetyGate.
+     */
+    data class PressHotkey(val combo: String) : PaletteAction()
     object NoOp : PaletteAction()
 }
 
@@ -311,10 +322,12 @@ private fun buildCommands(notes: List<com.pulseteam.desktop.data.notes.Note>): L
     out += PaletteCommand("a2", "Models", "Settings", PaletteAction.OpenSettings("models"))
     out += PaletteCommand("a3", "Hotkeys", "Settings", PaletteAction.OpenSettings("hotkeys"))
     out += PaletteCommand("a4", "Desktop", "Settings", PaletteAction.OpenSettings("desktop"))
-    // Desktop control (Phase 1)
+    // Desktop control (Phase 1 + Phase 2)
     out += PaletteCommand("screenshot", "Скриншот (save to captures)", "Desktop", PaletteAction.TakeScreenshot, "Ctrl ⇧ S")
     out += PaletteCommand("read-screen", "Что на экране? (OCR)", "Desktop", PaletteAction.ReadScreenText)
     out += PaletteCommand("click-on-text", "Кликни: …", "Desktop", PaletteAction.ClickOnText(""))
+    out += PaletteCommand("type-text", "Набери: …", "Desktop", PaletteAction.TypeText(""))
+    out += PaletteCommand("press-hotkey", "Хоткей: …", "Desktop", PaletteAction.PressHotkey(""))
     // Real notes from SQLite
     notes.take(20).forEach { n ->
         val age = now - n.updatedAt

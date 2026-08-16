@@ -34,7 +34,6 @@ import com.pulseteam.desktop.data.ai.AiEngine
 import com.pulseteam.desktop.data.ai.LlamaClient
 import com.pulseteam.desktop.data.ai.LlamaEngine
 import com.pulseteam.desktop.data.ai.LlamaServerProcess
-import com.pulseteam.desktop.data.ai.LocalMockEngine
 import com.pulseteam.desktop.data.ai.ModelsRepository
 import com.pulseteam.desktop.data.ai.RuntimeDownloader
 import com.pulseteam.desktop.data.auth.AuthApi
@@ -77,6 +76,7 @@ import com.pulseteam.desktop.ui.palette.CommandPalette
 import com.pulseteam.desktop.ui.palette.PaletteAction
 import com.pulseteam.desktop.ui.desktop.ConfirmActionDialog
 import com.pulseteam.desktop.ui.desktop.ClickTargetDialog
+import com.pulseteam.desktop.ui.desktop.TextInputDialog
 import com.pulseteam.desktop.ui.settings.SettingsScreen
 import com.pulseteam.desktop.ui.skills.SkillsScreen
 import com.pulseteam.desktop.ui.theme.PulseColors
@@ -113,8 +113,9 @@ fun main() = application {
     val session by authSession.state.collectAsState()
     val syncState by syncEngine.state.collectAsState()
 
-    // AI engine: real llama-server with mock fallback when server can't start
-    // (no model downloaded yet, no runtime, etc.). Created once, persists.
+    // AI engine: real llama-server. NO MOCK. If the server can't start, the
+    // engine throws IllegalStateException with a user-readable message; the
+    // chat view model catches it and shows the message in the AI bubble.
     val modelsRepo = remember { ModelsRepository() }
     val runtimeDownloader = remember { RuntimeDownloader() }
     val llamaServer = remember { LlamaServerProcess() }
@@ -124,7 +125,6 @@ fun main() = application {
             repository = modelsRepo,
             server = llamaServer,
             client = llamaClient,
-            fallback = LocalMockEngine(),
         )
     }
     // Onboarding gate: shown until both runtime and at least one model
@@ -148,6 +148,10 @@ fun main() = application {
     // the ClickTargetDialog is rendered on top. User types target → onSubmit
     // dispatches proposeClickOnText(target).
     var clickTargetDialogOpen by remember { mutableStateOf(false) }
+    // Inline text input for the "Набери: …" palette command.
+    var typeTextDialogOpen by remember { mutableStateOf(false) }
+    // Inline hotkey input for the "Хоткей: …" palette command.
+    var hotkeyDialogOpen by remember { mutableStateOf(false) }
     var selectedChatId by remember { mutableStateOf("welcome") }
     // Track whether the user has unlocked the sync key this session.
     // Reset to true once they Skip so we don't keep nagging.
@@ -545,6 +549,20 @@ fun main() = application {
                                             }
                                         }
                                     }
+                                    is PaletteAction.TypeText -> {
+                                        if (!settings.desktopEnabled) {
+                                            lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                        } else {
+                                            typeTextDialogOpen = true
+                                        }
+                                    }
+                                    is PaletteAction.PressHotkey -> {
+                                        if (!settings.desktopEnabled) {
+                                            lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                        } else {
+                                            hotkeyDialogOpen = true
+                                        }
+                                    }
                                     else -> Unit
                                 }
                                 paletteOpen = false
@@ -604,6 +622,64 @@ fun main() = application {
                                 }
                             },
                             onCancel = { clickTargetDialogOpen = false },
+                        )
+                    }
+
+                    // Inline text input for the "Набери: …" palette command.
+                    if (typeTextDialogOpen) {
+                        TextInputDialog(
+                            title = "Type what?",
+                            hint = "Pulse will type the text into the currently-focused control after you confirm.",
+                            example = "Hello, world!",
+                            placeholder = "",
+                            validate = null,
+                            onSubmit = { text ->
+                                typeTextDialogOpen = false
+                                if (!settings.desktopEnabled) {
+                                    lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                } else {
+                                    scope.launch {
+                                        lastEvent = when (val r = desktop.proposeTypeText(text)) {
+                                            is ProposeResult.NeedsConfirmation -> "Type: confirm dialog opened"
+                                            is ProposeResult.NotFound -> "Type: not found"  // not used
+                                            is ProposeResult.Unavailable -> "Type: ${r.reason}"
+                                            is ProposeResult.Executed -> "Type: ${r.message}"
+                                        }
+                                    }
+                                }
+                            },
+                            onCancel = { typeTextDialogOpen = false },
+                        )
+                    }
+
+                    // Inline hotkey input for the "Хоткей: …" palette command.
+                    if (hotkeyDialogOpen) {
+                        TextInputDialog(
+                            title = "Press which hotkey?",
+                            hint = "Pulse will send the chord after you confirm. Format: Modifiers+Key.",
+                            example = "Ctrl+Shift+S, alt+f4, Enter, Tab",
+                            validate = { input ->
+                                if (input.isBlank()) "Required"
+                                else if (!com.pulseteam.desktop.data.desktop.isValidHotkey(input))
+                                    "Unrecognised: \"$input\". Try Ctrl+Shift+S, alt+f4, Enter, etc."
+                                else null
+                            },
+                            onSubmit = { combo ->
+                                hotkeyDialogOpen = false
+                                if (!settings.desktopEnabled) {
+                                    lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                } else {
+                                    scope.launch {
+                                        lastEvent = when (val r = desktop.proposePressHotkey(combo)) {
+                                            is ProposeResult.NeedsConfirmation -> "Hotkey: confirm dialog opened"
+                                            is ProposeResult.NotFound -> "Hotkey: not found"  // not used
+                                            is ProposeResult.Unavailable -> "Hotkey: ${r.reason}"
+                                            is ProposeResult.Executed -> "Hotkey: ${r.message}"
+                                        }
+                                    }
+                                }
+                            },
+                            onCancel = { hotkeyDialogOpen = false },
                         )
                     }
                 }

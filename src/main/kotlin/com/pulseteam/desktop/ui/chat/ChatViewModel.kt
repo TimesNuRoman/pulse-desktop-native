@@ -15,7 +15,6 @@
 package com.pulseteam.desktop.ui.chat
 
 import com.pulseteam.desktop.data.ai.AiEngine
-import com.pulseteam.desktop.data.ai.LocalMockEngine
 import com.pulseteam.desktop.data.notes.NoteLink
 import com.pulseteam.desktop.data.notes.NoteLinkParser
 import com.pulseteam.desktop.data.skills.Skill
@@ -34,7 +33,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class ChatViewModel(
-    private val engine: AiEngine = LocalMockEngine(),
+    private val engine: AiEngine,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     /** Optional web search provider. Null disables web search entirely. */
     private val webSearch: WebSearch? = null,
@@ -123,8 +122,30 @@ class ChatViewModel(
                     delay(5_000)
                     _webStatus.value = null
                 }
+            } catch (e: IllegalStateException) {
+                // Engine failure (model missing, server not ready, etc.) —
+                // surface the engine's user-readable message in the AI bubble
+                // so the user knows what to do (install a model, check logs, etc.)
+                _messages.update { current ->
+                    current.map { msg ->
+                        if (msg.id == aiMsgId) msg.copy(
+                            text = e.message ?: "AI engine error.",
+                            from = "ai",
+                        ) else msg
+                    }
+                }
             } catch (_: kotlinx.coroutines.CancellationException) {
                 // Swallow: a newer user message cancelled us.
+            } catch (t: Throwable) {
+                // Anything else: show a generic but readable error.
+                _messages.update { current ->
+                    current.map { msg ->
+                        if (msg.id == aiMsgId) msg.copy(
+                            text = "Unexpected error: ${t.message ?: t::class.java.simpleName}",
+                            from = "ai",
+                        ) else msg
+                    }
+                }
             }
         }
     }
