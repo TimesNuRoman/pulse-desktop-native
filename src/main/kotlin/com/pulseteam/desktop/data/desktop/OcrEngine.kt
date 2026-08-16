@@ -60,11 +60,13 @@ class TesseractCliOcr : OcrEngine {
     private val logDir = File(System.getProperty("user.home"), ".pulse/logs")
     private val logFile = File(logDir, "tesseract.log")
 
-    // Detect tesseract once on construction. `which` is the POSIX way; on
-    // Windows we fall back to `where`. Both write a path or nothing to
-    // stdout; non-zero exit means "not found".
-    private val detected: Boolean by lazy { probeBinary() != null }
-    private val detectedVersion: String? by lazy { probeBinary()?.let { runVersionProbe() } }
+    // Probe is cached behind a mutable property so [refresh] can invalidate
+    // it. The first call hits the disk; subsequent calls are O(1). A
+    // `which` shell-out takes ~10-50 ms — not free, but not on a hot path.
+    @Volatile private var cachedPath: String? = probeBinary()
+    @Volatile private var cachedVersion: String? = cachedPath?.let { runVersionProbe() }
+    private val detected: Boolean get() = cachedPath != null
+    private val detectedVersion: String? get() = cachedVersion
 
     override suspend fun ocr(image: BufferedImage, lang: String): OcrResult = withContext(Dispatchers.IO) {
         if (!detected) {
@@ -122,6 +124,17 @@ class TesseractCliOcr : OcrEngine {
         isWindows() -> "tesseract not found — install UB-Mannheim Tesseract: https://github.com/UB-Mannheim/tesseract/wiki"
         isMac() -> "tesseract not found — run: brew install tesseract"
         else -> "tesseract not found — run: sudo apt install tesseract-ocr"
+    }
+
+    /**
+     * Re-probe the system for tesseract. Call after the user installs
+     * tesseract so the UI reflects the new state without restarting Pulse.
+     */
+    @Synchronized
+    fun refresh() {
+        val newPath = probeBinary()
+        cachedPath = newPath
+        cachedVersion = newPath?.let { runVersionProbe() }
     }
 
     // ----- internals -----

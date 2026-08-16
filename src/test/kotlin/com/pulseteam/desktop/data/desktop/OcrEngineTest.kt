@@ -86,4 +86,22 @@ class OcrEngineTest {
         assertEquals(1, words.size)
         assertEquals("ok", words[0].text)
     }
+
+    @Test
+    fun `TesseractCliOcr refresh re-probes the binary on PATH`() {
+        // Create a real impl and call refresh. The result depends on the
+        // host: if tesseract is installed, isAvailable stays true and
+        // statusMessage contains "tesseract". If not, statusMessage
+        // contains the install hint. Either way, the call must not throw.
+        val ocr = TesseractCliOcr()
+        val before = ocr.isAvailable()
+        val msgBefore = ocr.statusMessage()
+        // Just call refresh — it re-probes and updates the cache.
+        ocr.refresh()
+        val after = ocr.isAvailable()
+        val msgAfter = ocr.statusMessage()
+        // The values should be stable across refresh() on the same machine.
+        assertEquals(before, after)
+        assertEquals(msgBefore, msgAfter)
+    }
 }

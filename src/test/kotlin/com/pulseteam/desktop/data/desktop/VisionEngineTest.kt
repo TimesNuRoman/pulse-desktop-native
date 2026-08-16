@@ -90,6 +90,66 @@ class VisionEngineTest {
     }
 
     @Test
+    fun `findOnScreen matches multi-word target across adjacent OCR words`() = runBlocking {
+        // Simulate a button labelled "Open File" with two words on the same line.
+        val ocr = FakeOcrEngine(
+            canned = listOf(
+                OcrWord("Open", 100, 200, 60, 24, 95),
+                OcrWord("File", 170, 200, 50, 24, 92),
+            ),
+        )
+        val engine = OcrFallbackVisionEngine(
+            screen = FakeScreenCapture(),
+            ocr = ocr,
+            textLlm = CannedTextLlm(null),
+            cloudVlm = null,
+        )
+        val m = engine.findOnScreen("Open File")
+        assertTrue(m.found)
+        assertEquals("Open File", m.matchedText)
+        // Centroid of (100, 170, 200, 224) → x = (100 + 220) / 2 = 160, y = 212.
+        assertEquals(160, m.x)
+        assertEquals(212, m.y)
+    }
+
+    @Test
+    fun `findOnScreen multi-word fails when words are not adjacent`() = runBlocking {
+        // "Open" at y=100, "File" at y=400 — different vertical zones. Should
+        // fall back to single-word match for "Open".
+        val ocr = FakeOcrEngine(
+            canned = listOf(
+                OcrWord("Open", 100, 100, 60, 24, 95),
+                OcrWord("File", 170, 400, 50, 24, 92),
+            ),
+        )
+        val engine = OcrFallbackVisionEngine(
+            screen = FakeScreenCapture(),
+            ocr = ocr,
+            textLlm = CannedTextLlm(null),
+            cloudVlm = null,
+        )
+        val m = engine.findOnScreen("Open File")
+        // Multi-word fails; falls back to single-word match for "Open".
+        assertTrue(m.found)
+        assertEquals("Open", m.matchedText)
+    }
+
+    @Test
+    fun `findOnScreen multi-word returns null when no part matches`() = runBlocking {
+        val ocr = FakeOcrEngine(
+            canned = listOf(OcrWord("Submit", 0, 0, 60, 20, 90)),
+        )
+        val engine = OcrFallbackVisionEngine(
+            screen = FakeScreenCapture(),
+            ocr = ocr,
+            textLlm = CannedTextLlm(null),
+            cloudVlm = null,
+        )
+        val m = engine.findOnScreen("Send Mail")
+        assertFalse(m.found)
+    }
+
+    @Test
     fun `describeScreen uses cloud VLM when enabled`() = runBlocking {
         val ocr = FakeOcrEngine(canned = listOf(OcrWord("hi", 0, 0, 20, 20, 90)))
         val cloud = FixedCloudVlm(enabled = true, response = "A blue button labelled hi")

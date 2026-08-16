@@ -981,10 +981,36 @@ private fun DesktopPanel(
         // Engine status rows
         if (desktop != null) {
             Spacer(Modifier.height(8.dp))
-            Text("Engines", color = PulseColors.FgDim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-            EngineStatusRow("Screen capture", desktop.screenAvailable, "ok")
-            EngineStatusRow("OCR (tesseract)", desktop.ocrAvailable, desktop.ocrStatus)
-            EngineStatusRow("PC interaction", desktop.pcAvailable, if (desktop.pcAvailable) "ok" else "unavailable")
+            var refreshTick by remember { mutableStateOf(0) }
+            // Reading refreshTick inside the status rows makes Compose
+            // re-evaluate them on Re-check.
+            val ocrAvail = remember(refreshTick) { desktop.ocrAvailable }
+            val ocrMsg = remember(refreshTick) { desktop.ocrStatus }
+            val pcAvail = remember(refreshTick) { desktop.pcAvailable }
+            val screenAvail = remember(refreshTick) { desktop.screenAvailable }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Engines", color = PulseColors.FgDim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                Box(
+                    modifier = Modifier
+                        .background(PulseColors.Bg3, RectangleShape)
+                        .border(1.dp, PulseColors.Border, RectangleShape)
+                        .clickable {
+                            desktop.recheckEngines()
+                            refreshTick++
+                        }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text("Re-check", color = PulseColors.Fg, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            EngineStatusRow("Screen capture", screenAvail, "ok")
+            EngineStatusRow("OCR (tesseract)", ocrAvail, ocrMsg)
+            EngineStatusRow("PC interaction", pcAvail, if (pcAvail) "ok" else "unavailable")
         }
     }
 }

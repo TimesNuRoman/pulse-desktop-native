@@ -57,6 +57,17 @@ class DesktopController(
     val pcAvailable: Boolean get() = pc.isAvailable()
     val screenAvailable: Boolean get() = screen.isAvailable()
 
+    /**
+     * Re-probe every engine for availability. Call after the user installs
+     * tesseract (or restarts a display server, etc.) so the Settings panel
+     * status rows reflect the new state.
+     */
+    fun recheckEngines() {
+        // Only OCR has a real refresh hook (cached probe result). The
+        // others are stateless getters backed by Robot constructors.
+        (ocr as? TesseractCliOcr)?.refresh()
+    }
+
     /** Capture screen + save to ~/.pulse/captures/yyyy-MM-dd-HHmmss.png. */
     suspend fun takeScreenshot(): File = withContext(Dispatchers.IO) {
         if (!screen.isAvailable()) {

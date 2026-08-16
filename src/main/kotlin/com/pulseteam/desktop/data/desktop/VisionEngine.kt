@@ -71,16 +71,72 @@ class OcrFallbackVisionEngine(
         val result = ocr.ocr(img)
         val t = target.trim()
         if (t.isEmpty()) return ScreenMatch(found = false)
-        // 1. Exact case-insensitive
-        val exact = result.words.firstOrNull { it.text.equals(t, ignoreCase = true) }
+
+        // Multi-word target: split on whitespace, find the run of adjacent words
+        // on the same line, within a small vertical tolerance and a sane horizontal
+        // gap. "Open File" → find "Open", then check if "File" follows within reach.
+        val parts = t.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (parts.size >= 2) {
+            val multi = findMultiWord(result.words, parts)
+            if (multi != null) return multi
+            // Fall through to single-word logic on the first part, so a partial
+            // match still helps the user (e.g. target "Open File", screen has "Open").
+        }
+
+        // Single-word path: exact > starts-with > contains.
+        val firstPart = parts.first()
+        val exact = result.words.firstOrNull { it.text.equals(firstPart, ignoreCase = true) }
         if (exact != null) return exact.toMatch()
-        // 2. Starts-with case-insensitive
-        val starts = result.words.firstOrNull { it.text.startsWith(t, ignoreCase = true) }
+        val starts = result.words.firstOrNull { it.text.startsWith(firstPart, ignoreCase = true) }
         if (starts != null) return starts.toMatch()
-        // 3. Contains case-insensitive
-        val contains = result.words.firstOrNull { it.text.contains(t, ignoreCase = true) }
+        val contains = result.words.firstOrNull { it.text.contains(firstPart, ignoreCase = true) }
         if (contains != null) return contains.toMatch()
         return ScreenMatch(found = false)
+    }
+
+    /**
+     * Search [words] for a contiguous run of [parts] (case-insensitive) where
+     * each consecutive word sits within [maxVerticalGapPx] vertically of the
+     * previous one. Returns the centroid of the whole run, or null.
+     *
+     * "Adjacent" in OCR = roughly the same line, maybe with 1-2 px of vertical
+     * drift between lines that wrapped. We allow up to 8 px vertical gap and
+     * 250 px horizontal gap (so a wide button with the label centered is OK).
+     */
+    private fun findMultiWord(words: List<OcrWord>, parts: List<String>): ScreenMatch? {
+        if (parts.isEmpty() || words.isEmpty()) return null
+        val maxVGap = 8
+        val maxHGap = 250
+        for (i in words.indices) {
+            if (!words[i].text.equals(parts[0], ignoreCase = true)) continue
+            val run = mutableListOf(words[i])
+            var cursor = i
+            for (p in 1 until parts.size) {
+                val prev = words[cursor]
+                val next = words.drop(cursor + 1).firstOrNull { w ->
+                    w.text.equals(parts[p], ignoreCase = true) &&
+                        kotlin.math.abs(w.top - prev.top) <= maxVGap &&
+                        (w.left - (prev.left + prev.width)) <= maxHGap &&
+                        (w.left - (prev.left + prev.width)) >= -8  // slight overlap is OK
+                } ?: break
+                run += next
+                cursor = words.indexOf(next)
+            }
+            if (run.size == parts.size) {
+                val minLeft = run.minOf { it.left }
+                val maxRight = run.maxOf { it.left + it.width }
+                val minTop = run.minOf { it.top }
+                val maxBottom = run.maxOf { it.top + it.height }
+                return ScreenMatch(
+                    found = true,
+                    x = (minLeft + maxRight) / 2,
+                    y = (minTop + maxBottom) / 2,
+                    confidence = run.minOf { it.conf },
+                    matchedText = run.joinToString(" ") { it.text },
+                )
+            }
+        }
+        return null
     }
 
     override suspend fun describeScreen(): ScreenDescription {

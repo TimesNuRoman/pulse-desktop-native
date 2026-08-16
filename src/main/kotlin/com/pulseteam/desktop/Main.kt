@@ -17,6 +17,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -69,6 +76,7 @@ import com.pulseteam.desktop.ui.onboarding.OnboardingScreen
 import com.pulseteam.desktop.ui.palette.CommandPalette
 import com.pulseteam.desktop.ui.palette.PaletteAction
 import com.pulseteam.desktop.ui.desktop.ConfirmActionDialog
+import com.pulseteam.desktop.ui.desktop.ClickTargetDialog
 import com.pulseteam.desktop.ui.settings.SettingsScreen
 import com.pulseteam.desktop.ui.skills.SkillsScreen
 import com.pulseteam.desktop.ui.theme.PulseColors
@@ -136,6 +144,10 @@ fun main() = application {
 
     var paletteOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    // Inline target input for the "Кликни: …" palette command. When true,
+    // the ClickTargetDialog is rendered on top. User types target → onSubmit
+    // dispatches proposeClickOnText(target).
+    var clickTargetDialogOpen by remember { mutableStateOf(false) }
     var selectedChatId by remember { mutableStateOf("welcome") }
     // Track whether the user has unlocked the sync key this session.
     // Reset to true once they Skip so we don't keep nagging.
@@ -228,6 +240,26 @@ fun main() = application {
     val safetyState by safety.state.collectAsState()
     val pending: PendingAction? = safetyState.pending
 
+    // First-run hint: if desktop control is enabled but tesseract is missing,
+    // surface a chat-level warning so the user knows what to install.
+    LaunchedEffect(settings.desktopEnabled, desktop.ocrAvailable) {
+        if (settings.desktopEnabled && !desktop.ocrAvailable) {
+            lastEvent = "Desktop control: tesseract not found. ${desktop.ocrStatus} (Settings → Desktop)"
+        }
+    }
+
+    // Pre-create captures dir on first composition so the Settings panel
+    // doesn't show a missing-folder error.
+    LaunchedEffect(Unit) {
+        try {
+            val d = java.io.File(System.getProperty("user.home"), ".pulse/captures")
+            if (!d.exists()) d.mkdirs()
+        } catch (_: Throwable) { /* best effort */ }
+    }
+
+    // Hotkey state: Ctrl+Shift+S triggers a screenshot from anywhere in the app.
+    // We attach a single onPreviewKeyEvent to the root Box (see Window block).
+
     LaunchedEffect(Unit) {
         NoteRepository.list()
         notesViewModel.refresh()
@@ -251,7 +283,36 @@ fun main() = application {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(PulseColors.Bg),
+                    .background(PulseColors.Bg)
+                    .onPreviewKeyEvent { event ->
+                        // Global hotkey: Ctrl+Shift+S = screenshot (Pulse "team" quick-capture).
+                        // Suppress when dialogs are open so the user can't accidentally fire
+                        // a screenshot mid-confirmation.
+                        if (event.type == KeyEventType.KeyDown
+                            && event.key == Key.S
+                            && event.isCtrlPressed
+                            && event.isShiftPressed
+                            && !paletteOpen
+                            && !clickTargetDialogOpen
+                            && pending == null
+                        ) {
+                            if (!settings.desktopEnabled) {
+                                lastEvent = "Desktop control disabled (Settings → Desktop)"
+                            } else {
+                                scope.launch {
+                                    lastEvent = try {
+                                        val f = desktop.takeScreenshot()
+                                        "Screenshot: ${f.name} (${f.length() / 1024} KB)"
+                                    } catch (t: Throwable) {
+                                        "Screenshot failed: ${t.message}"
+                                    }
+                                }
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    },
             ) {
                 if (!onboardingComplete) {
                     OnboardingScreen(
@@ -452,6 +513,8 @@ fun main() = application {
                                     is PaletteAction.ReadScreenText -> {
                                         if (!settings.desktopEnabled) {
                                             lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                        } else if (!desktop.ocrAvailable) {
+                                            lastEvent = "OCR unavailable: ${desktop.ocrStatus}"
                                         } else {
                                             scope.launch {
                                                 lastEvent = try {
@@ -468,8 +531,9 @@ fun main() = application {
                                         if (!settings.desktopEnabled) {
                                             lastEvent = "Desktop control disabled (Settings → Desktop)"
                                         } else if (action.target.isBlank()) {
-                                            // Phase 1: inline target input is deferred. Show a hint.
-                                            lastEvent = "Click: type target in chat (Phase 2 inline input)"
+                                            // Open the inline target input dialog; we dispatch
+                                            // the click once the user submits.
+                                            clickTargetDialogOpen = true
                                         } else {
                                             scope.launch {
                                                 lastEvent = when (val r = desktop.proposeClickOnText(action.target)) {
@@ -517,6 +581,29 @@ fun main() = application {
                             pending = pending,
                             onConfirm = { scope.launch { desktop.executeApproved() } },
                             onCancel = { desktop.cancelPending() },
+                        )
+                    }
+
+                    // Inline target input for the "Кликни: …" palette command.
+                    if (clickTargetDialogOpen) {
+                        ClickTargetDialog(
+                            initial = "",
+                            onSubmit = { target ->
+                                clickTargetDialogOpen = false
+                                if (!settings.desktopEnabled) {
+                                    lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                } else {
+                                    scope.launch {
+                                        lastEvent = when (val r = desktop.proposeClickOnText(target)) {
+                                            is ProposeResult.NeedsConfirmation -> "Click: confirm dialog opened"
+                                            is ProposeResult.NotFound -> "Click: \"${r.target}\" not found on screen"
+                                            is ProposeResult.Unavailable -> "Click: ${r.reason}"
+                                            is ProposeResult.Executed -> "Click: ${r.message}"
+                                        }
+                                    }
+                                }
+                            },
+                            onCancel = { clickTargetDialogOpen = false },
                         )
                     }
                 }
