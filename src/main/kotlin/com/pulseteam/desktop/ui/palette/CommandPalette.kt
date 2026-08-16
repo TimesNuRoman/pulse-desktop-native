@@ -65,6 +65,15 @@ sealed class PaletteAction {
     object ToggleRightPanel : PaletteAction()
     data class OpenNote(val noteId: String) : PaletteAction()
     data class OpenChat(val id: String) : PaletteAction()
+    /** Capture full screen to ~/.pulse/captures/yyyy-MM-dd-HHmmss.png. */
+    object TakeScreenshot : PaletteAction()
+    /** Capture + OCR; show the text in the chat. */
+    object ReadScreenText : PaletteAction()
+    /**
+     * Capture + OCR + find a word matching [target], then ask SafetyGate
+     * to approve the click. Main.kt handles the inline input prompt.
+     */
+    data class ClickOnText(val target: String) : PaletteAction()
     object NoOp : PaletteAction()
 }
 
@@ -301,6 +310,11 @@ private fun buildCommands(notes: List<com.pulseteam.desktop.data.notes.Note>): L
     out += PaletteCommand("a1", "Account", "Settings", PaletteAction.OpenSettings("account"))
     out += PaletteCommand("a2", "Models", "Settings", PaletteAction.OpenSettings("models"))
     out += PaletteCommand("a3", "Hotkeys", "Settings", PaletteAction.OpenSettings("hotkeys"))
+    out += PaletteCommand("a4", "Desktop", "Settings", PaletteAction.OpenSettings("desktop"))
+    // Desktop control (Phase 1)
+    out += PaletteCommand("screenshot", "Скриншот (save to captures)", "Desktop", PaletteAction.TakeScreenshot, "Ctrl ⇧ S")
+    out += PaletteCommand("read-screen", "Что на экране? (OCR)", "Desktop", PaletteAction.ReadScreenText)
+    out += PaletteCommand("click-on-text", "Кликни: …", "Desktop", PaletteAction.ClickOnText(""))
     // Real notes from SQLite
     notes.take(20).forEach { n ->
         val age = now - n.updatedAt

@@ -3,6 +3,7 @@
 // Exposed as StateFlow so the UI reactively reflects changes.
 package com.pulseteam.desktop.data.settings
 
+import com.pulseteam.desktop.data.desktop.SafetyLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -17,12 +18,23 @@ import java.util.Properties
 
 enum class RoutingMode { LocalOnly, ApiOnly, Hybrid }
 
+/** Which vision model path the desktop control uses for image-understanding. */
+enum class VisionModel { OcrOnly, OpenAiCloud }
+
 data class AppSettings(
     val activeModelId: String = "qwen2.5-coder:7b",
     val routing: RoutingMode = RoutingMode.Hybrid,
     val temperature: Double = 0.7,
     val maxTokens: Int = 2048,
     val topP: Double = 0.9,
+    /** Master switch for the "Desktop Control" feature (Cmd palette + Settings tab). */
+    val desktopEnabled: Boolean = false,
+    /** Per-action confirmation policy. Phase 1 = AlwaysConfirm. */
+    val safetyLevel: SafetyLevel = SafetyLevel.AlwaysConfirm,
+    /** Which vision path to use for "describe screen". */
+    val visionModel: VisionModel = VisionModel.OcrOnly,
+    /** OpenAI API key for cloud VLM. Empty = feature disabled. */
+    val cloudApiKey: String = "",
 )
 
 object AppSettingsStore {
@@ -51,6 +63,10 @@ object AppSettingsStore {
                 temperature = p.getProperty("temperature")?.toDoubleOrNull() ?: 0.7,
                 maxTokens = p.getProperty("maxTokens")?.toIntOrNull() ?: 2048,
                 topP = p.getProperty("topP")?.toDoubleOrNull() ?: 0.9,
+                desktopEnabled = p.getProperty("desktopEnabled")?.toBooleanStrictOrNull() ?: false,
+                safetyLevel = runCatching { SafetyLevel.valueOf(p.getProperty("safetyLevel") ?: "AlwaysConfirm") }.getOrDefault(SafetyLevel.AlwaysConfirm),
+                visionModel = runCatching { VisionModel.valueOf(p.getProperty("visionModel") ?: "OcrOnly") }.getOrDefault(VisionModel.OcrOnly),
+                cloudApiKey = p.getProperty("cloudApiKey") ?: "",
             )
         }
     }
@@ -63,6 +79,10 @@ object AppSettingsStore {
         p.setProperty("temperature", s.temperature.toString())
         p.setProperty("maxTokens", s.maxTokens.toString())
         p.setProperty("topP", s.topP.toString())
+        p.setProperty("desktopEnabled", s.desktopEnabled.toString())
+        p.setProperty("safetyLevel", s.safetyLevel.name)
+        p.setProperty("visionModel", s.visionModel.name)
+        p.setProperty("cloudApiKey", s.cloudApiKey)
         Files.newOutputStream(file).use { p.store(it, "Pulse app settings") }
     }
 }

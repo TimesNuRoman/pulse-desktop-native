@@ -48,6 +48,8 @@ import com.pulseteam.desktop.ui.common.Kbd
 import com.pulseteam.desktop.data.ai.ActiveDownload
 import com.pulseteam.desktop.data.ai.DownloadState
 import com.pulseteam.desktop.data.ai.ModelEntry
+import com.pulseteam.desktop.data.desktop.DesktopController
+import com.pulseteam.desktop.data.desktop.SafetyLevel
 import com.pulseteam.desktop.data.voice.WhisperTranscriber
 import kotlinx.coroutines.launch
 import com.pulseteam.desktop.data.ai.ModelsRepository
@@ -58,6 +60,7 @@ import com.pulseteam.desktop.ui.common.StatusDot
 import com.pulseteam.desktop.data.settings.AppSettings
 import com.pulseteam.desktop.data.settings.AppSettingsStore
 import com.pulseteam.desktop.data.settings.RoutingMode
+import com.pulseteam.desktop.data.settings.VisionModel
 import com.pulseteam.desktop.ui.theme.MonoStyle
 import com.pulseteam.desktop.ui.theme.PulseColors
 
@@ -66,7 +69,8 @@ private enum class SettingsTab(val section: String) {
     Models("models"),
     Routing("routing"),
     Inference("inference"),
-    Hotkeys("hotkeys")
+    Hotkeys("hotkeys"),
+    Desktop("desktop"),
 }
 
 private enum class SettingsSection(val title: String, val icon: ImageVector, val tab: SettingsTab) {
@@ -75,6 +79,7 @@ private enum class SettingsSection(val title: String, val icon: ImageVector, val
     Routing("Routing", Icons.Default.Tune, SettingsTab.Routing),
     Inference("Inference", Icons.Default.Tune, SettingsTab.Inference),
     Hotkeys("Hotkeys", Icons.Default.GraphicEq, SettingsTab.Hotkeys),
+    Desktop("Desktop", Icons.Default.Memory, SettingsTab.Desktop),
 }
 
 @Composable
@@ -87,6 +92,7 @@ fun SettingsScreen(
     modelsRepo: ModelsRepository? = null,
     runtimeDownloader: RuntimeDownloader? = null,
     whisper: WhisperTranscriber? = null,
+    desktop: DesktopController? = null,
 ) {
     var activeTab by remember { mutableStateOf(if (userEmail != null) SettingsTab.Account else SettingsTab.Models) }
     var dirty by remember { mutableStateOf(false) }
@@ -152,6 +158,10 @@ fun SettingsScreen(
                         SettingsTab.Routing -> RoutingPanel(onChange = { dirty = true })
                         SettingsTab.Inference -> InferencePanel(onChange = { dirty = true })
                         SettingsTab.Hotkeys -> HotkeysPanel()
+                        SettingsTab.Desktop -> DesktopPanel(
+                            onChange = { dirty = true },
+                            desktop = desktop,
+                        )
                     }
                 }
             }
@@ -179,6 +189,7 @@ private fun ActivityRail(modifier: Modifier = Modifier) {
             Icons.Default.Tune to "Routing",
             Icons.Default.Tune to "Inference",
             Icons.Default.GraphicEq to "Hotkeys",
+            Icons.Default.Memory to "Desktop",
         )
         items.forEach { entry ->
             val icon = entry.first
@@ -872,7 +883,127 @@ private fun BarButton(text: String, onClick: () -> Unit, primary: Boolean = fals
     }
 }
 
+/**
+ * Desktop control settings tab. Toggles the master enable, picks the
+ * vision model, optionally stores the OpenAI API key, and shows the
+ * status of the three underlying engines (screen capture, OCR, PC).
+ */
+@Composable
+private fun DesktopPanel(
+    onChange: () -> Unit,
+    desktop: DesktopController?,
+) {
+    val settings by AppSettingsStore.state.collectAsState()
+    var apiKeyInput by remember(settings.cloudApiKey) { mutableStateOf(settings.cloudApiKey) }
 
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // Master enable
+        ToggleRow(
+            label = "Enable desktop control",
+            initial = settings.desktopEnabled,
+            onChange = {
+                AppSettingsStore.update { it.copy(desktopEnabled = !settings.desktopEnabled) }
+                onChange()
+            },
+        )
+
+        // Safety level — locked at AlwaysConfirm in MVP
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, PulseColors.Border, RectangleShape)
+                .background(PulseColors.Bg2, RectangleShape)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Safety level", color = PulseColors.Fg, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            Text("Always confirm", color = PulseColors.FgDim, fontSize = 12.sp, style = MonoStyle)
+        }
+
+        // Vision model picker
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, PulseColors.Border, RectangleShape)
+                .background(PulseColors.Bg2, RectangleShape)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .clickable {
+                    val next = if (settings.visionModel == VisionModel.OcrOnly) VisionModel.OpenAiCloud else VisionModel.OcrOnly
+                    AppSettingsStore.update { it.copy(visionModel = next) }
+                    onChange()
+                },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Vision model", color = PulseColors.Fg, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            Text(
+                when (settings.visionModel) {
+                    VisionModel.OcrOnly -> "OCR only (local)"
+                    VisionModel.OpenAiCloud -> "OpenAI gpt-4o-mini (cloud)"
+                },
+                color = PulseColors.FgDim,
+                fontSize = 12.sp,
+                style = MonoStyle,
+            )
+            Spacer(Modifier.width(4.dp))
+            Text("▾", color = PulseColors.FgDim, fontSize = 12.sp)
+        }
+
+        // OpenAI API key (only if cloud model selected)
+        if (settings.visionModel == VisionModel.OpenAiCloud) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, PulseColors.Border, RectangleShape)
+                    .background(PulseColors.Bg2, RectangleShape)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("OpenAI API key", color = PulseColors.Fg, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                androidx.compose.foundation.text.BasicTextField(
+                    value = apiKeyInput,
+                    onValueChange = {
+                        apiKeyInput = it
+                        AppSettingsStore.update { s -> s.copy(cloudApiKey = it) }
+                        onChange()
+                    },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        color = PulseColors.Fg,
+                        fontSize = 12.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    ),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(PulseColors.Accent),
+                    modifier = Modifier.width(220.dp),
+                )
+            }
+        }
+
+        // Engine status rows
+        if (desktop != null) {
+            Spacer(Modifier.height(8.dp))
+            Text("Engines", color = PulseColors.FgDim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            EngineStatusRow("Screen capture", desktop.screenAvailable, "ok")
+            EngineStatusRow("OCR (tesseract)", desktop.ocrAvailable, desktop.ocrStatus)
+            EngineStatusRow("PC interaction", desktop.pcAvailable, if (desktop.pcAvailable) "ok" else "unavailable")
+        }
+    }
+}
+
+@Composable
+private fun EngineStatusRow(label: String, available: Boolean, status: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StatusDot(
+            color = if (available) PulseColors.Green else PulseColors.Error,
+            size = 8.dp,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(label, color = PulseColors.Fg, fontSize = 11.sp, modifier = Modifier.weight(1f))
+        Text(status, color = PulseColors.FgDim, fontSize = 10.sp, style = MonoStyle)
+    }
+}
 
 
 

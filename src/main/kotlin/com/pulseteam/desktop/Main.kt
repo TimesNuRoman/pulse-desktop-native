@@ -33,7 +33,22 @@ import com.pulseteam.desktop.data.ai.RuntimeDownloader
 import com.pulseteam.desktop.data.auth.AuthApi
 import com.pulseteam.desktop.data.auth.AuthSession
 import com.pulseteam.desktop.data.auth.PasswordCache
+import com.pulseteam.desktop.data.desktop.DesktopController
+import com.pulseteam.desktop.data.desktop.LocalTextLlm
+import com.pulseteam.desktop.data.desktop.OcrFallbackVisionEngine
+import com.pulseteam.desktop.data.desktop.OcrEngine
+import com.pulseteam.desktop.data.desktop.OpenAiCloudVlm
+import com.pulseteam.desktop.data.desktop.PcController
+import com.pulseteam.desktop.data.desktop.PendingAction
+import com.pulseteam.desktop.data.desktop.ProposeResult
+import com.pulseteam.desktop.data.desktop.RobotPcController
+import com.pulseteam.desktop.data.desktop.RobotScreenCapture
+import com.pulseteam.desktop.data.desktop.SafetyGate
+import com.pulseteam.desktop.data.desktop.ScreenCapture
+import com.pulseteam.desktop.data.desktop.TesseractCliOcr
+import com.pulseteam.desktop.data.desktop.VisionEngine
 import com.pulseteam.desktop.data.log.PulseLogger
+import com.pulseteam.desktop.data.settings.AppSettingsStore
 import com.pulseteam.desktop.data.notes.NoteLink
 import com.pulseteam.desktop.data.notes.NoteRepository
 import com.pulseteam.desktop.data.skills.SkillRepository
@@ -52,6 +67,8 @@ import com.pulseteam.desktop.ui.notes.NoteEditorScreen
 import com.pulseteam.desktop.ui.notes.NotesViewModel
 import com.pulseteam.desktop.ui.onboarding.OnboardingScreen
 import com.pulseteam.desktop.ui.palette.CommandPalette
+import com.pulseteam.desktop.ui.palette.PaletteAction
+import com.pulseteam.desktop.ui.desktop.ConfirmActionDialog
 import com.pulseteam.desktop.ui.settings.SettingsScreen
 import com.pulseteam.desktop.ui.skills.SkillsScreen
 import com.pulseteam.desktop.ui.theme.PulseColors
@@ -170,6 +187,46 @@ fun main() = application {
     // message while the binary or model comes down. After that, every
     // voice click is a synchronous call into whisper.cpp.
     val whisper = remember { WhisperTranscriber() }
+
+    // ---------------------------------------------------------------
+    // Desktop control (Phase 1): screen capture + OCR + PC interaction.
+    // Real impls (RobotScreenCapture + TesseractCliOcr + RobotPcController).
+    // SafetyGate is configured from AppSettings via LaunchedEffect below.
+    // ---------------------------------------------------------------
+    val screen: ScreenCapture = remember { RobotScreenCapture() }
+    val ocr: OcrEngine = remember { TesseractCliOcr() }
+    val pc: PcController = remember { RobotPcController() }
+    val safety: SafetyGate = remember { SafetyGate() }
+    val textLlm = remember(llamaClient) {
+        LocalTextLlm(llamaClient = llamaClient) { AppSettingsStore.state.value.activeModelId }
+    }
+    val cloudVlm = remember {
+        OpenAiCloudVlm(apiKeyProvider = { AppSettingsStore.state.value.cloudApiKey })
+    }
+    val vision: VisionEngine = remember(screen, ocr, textLlm, cloudVlm) {
+        OcrFallbackVisionEngine(
+            screen = screen,
+            ocr = ocr,
+            textLlm = textLlm,
+            cloudVlm = cloudVlm,
+        )
+    }
+    val desktop: DesktopController = remember(screen, ocr, pc, vision, safety) {
+        DesktopController(
+            screen = screen,
+            ocr = ocr,
+            pc = pc,
+            vision = vision,
+            safety = safety,
+        )
+    }
+    // Sync SafetyGate with AppSettings whenever they change.
+    val settings by AppSettingsStore.state.collectAsState()
+    LaunchedEffect(settings.desktopEnabled, settings.safetyLevel) {
+        safety.configure(settings.desktopEnabled, settings.safetyLevel)
+    }
+    val safetyState by safety.state.collectAsState()
+    val pending: PendingAction? = safetyState.pending
 
     LaunchedEffect(Unit) {
         NoteRepository.list()
@@ -367,16 +424,62 @@ fun main() = application {
                             onDismiss = { paletteOpen = false },
                             onAction = { action ->
                                 when (action) {
-                                    is com.pulseteam.desktop.ui.palette.PaletteAction.OpenSettings ->
+                                    is PaletteAction.OpenSettings ->
                                         settingsOpen = true
-                                    is com.pulseteam.desktop.ui.palette.PaletteAction.OpenSkills ->
+                                    is PaletteAction.OpenSkills ->
                                         skillsOpen = true
-                                    is com.pulseteam.desktop.ui.palette.PaletteAction.NewChat ->
+                                    is PaletteAction.NewChat ->
                                         selectedChatId = "chat-${System.currentTimeMillis()}"
-                                    is com.pulseteam.desktop.ui.palette.PaletteAction.NewNote ->
+                                    is PaletteAction.NewNote ->
                                         notesViewModel.createNote()
-                                    is com.pulseteam.desktop.ui.palette.PaletteAction.OpenNote -> {
+                                    is PaletteAction.OpenNote -> {
                                         notesViewModel.open(action.noteId)
+                                    }
+                                    is PaletteAction.TakeScreenshot -> {
+                                        if (!settings.desktopEnabled) {
+                                            lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                        } else {
+                                            scope.launch {
+                                                lastEvent = try {
+                                                    val f = desktop.takeScreenshot()
+                                                    "Screenshot: ${f.name} (${f.length() / 1024} KB)"
+                                                } catch (t: Throwable) {
+                                                    "Screenshot failed: ${t.message}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    is PaletteAction.ReadScreenText -> {
+                                        if (!settings.desktopEnabled) {
+                                            lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                        } else {
+                                            scope.launch {
+                                                lastEvent = try {
+                                                    val text = desktop.readScreenText()
+                                                    if (text.isBlank()) "Screen: (no text recognised)"
+                                                    else "Screen: \"${text.take(120)}\""
+                                                } catch (t: Throwable) {
+                                                    "Screen read failed: ${t.message}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                    is PaletteAction.ClickOnText -> {
+                                        if (!settings.desktopEnabled) {
+                                            lastEvent = "Desktop control disabled (Settings → Desktop)"
+                                        } else if (action.target.isBlank()) {
+                                            // Phase 1: inline target input is deferred. Show a hint.
+                                            lastEvent = "Click: type target in chat (Phase 2 inline input)"
+                                        } else {
+                                            scope.launch {
+                                                lastEvent = when (val r = desktop.proposeClickOnText(action.target)) {
+                                                    is ProposeResult.NeedsConfirmation -> "Click: confirm dialog opened"
+                                                    is ProposeResult.NotFound -> "Click: \"${r.target}\" not found on screen"
+                                                    is ProposeResult.Unavailable -> "Click: ${r.reason}"
+                                                    is ProposeResult.Executed -> "Click: ${r.message}"
+                                                }
+                                            }
+                                        }
                                     }
                                     else -> Unit
                                 }
@@ -397,6 +500,7 @@ fun main() = application {
                             modelsRepo = modelsRepo,
                             runtimeDownloader = runtimeDownloader,
                             whisper = whisper,
+                            desktop = desktop,
                         )
                     }
 
@@ -404,6 +508,15 @@ fun main() = application {
                         SkillsScreen(
                             repository = skillRepo,
                             onDismiss = { skillsOpen = false },
+                        )
+                    }
+
+                    // Safety confirm dialog (renders on top of everything).
+                    if (pending != null) {
+                        ConfirmActionDialog(
+                            pending = pending,
+                            onConfirm = { scope.launch { desktop.executeApproved() } },
+                            onCancel = { desktop.cancelPending() },
                         )
                     }
                 }
