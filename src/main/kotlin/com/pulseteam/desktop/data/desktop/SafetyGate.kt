@@ -11,10 +11,22 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 
 /**
- * How aggressive the SafetyGate is. Phase 1 only ships AlwaysConfirm —
- * every active command shows the dialog. More options come in Phase 2.
+ * How aggressive the SafetyGate is.
+ *
+ * - [AlwaysConfirm] — every active command shows the dialog. The safe
+ *   default. The user has to OK every action.
+ * - [OncePerCommand] — within [OncePerCommand.windowMs] (5 min), the
+ *   same action summary is auto-approved. Useful when running a series
+ *   of "Click on Submit"-style commands.
+ * - [Never] — desktop control is enabled but no dialogs are shown.
+ *   The user takes full responsibility. Still gated by the [enabled]
+ *   master flag in [SafetyState].
  */
-enum class SafetyLevel { AlwaysConfirm /* Phase 2: OncePerCommand, Never */ }
+enum class SafetyLevel(val windowMs: Long = 0L) {
+    AlwaysConfirm,
+    OncePerCommand(windowMs = 5 * 60 * 1000L),
+    Never,
+}
 
 /** UI-visible state of the SafetyGate. */
 data class SafetyState(
@@ -23,6 +35,11 @@ data class SafetyState(
     val level: SafetyLevel = SafetyLevel.AlwaysConfirm,
     /** Non-null = there is an action waiting for the user to confirm or cancel. */
     val pending: PendingAction? = null,
+    /** Summary text of the most recently auto-approved action. Used by
+     *  [SafetyLevel.OncePerCommand] to dedupe within the window. */
+    val lastAutoApprovedSummary: String? = null,
+    /** When the last auto-approved action was approved. */
+    val lastAutoApprovedAt: Long = 0L,
 )
 
 /** An action that's been proposed and is waiting for user approval. */
@@ -61,8 +78,12 @@ class SafetyGate {
      *   case; the controller's main entry point is the one that gates
      *   on [SafetyState.enabled].
      * - When [SafetyLevel.AlwaysConfirm], populates [SafetyState.pending]
-     *   and returns `false`. The caller waits for [confirm] / [cancel]
-     *   before executing.
+     *   and returns `false`.
+     * - When [SafetyLevel.OncePerCommand], checks if the same [summary]
+     *   was approved within the [SafetyLevel.windowMs] window. If yes,
+     *   returns `true` (allowed). Otherwise populates pending.
+     * - When [SafetyLevel.Never], returns `true` (allowed) and records
+     *   the action for the audit log.
      *
      * @return `true` if the action may proceed without further input.
      */
@@ -74,12 +95,36 @@ class SafetyGate {
                 _state.value = s.copy(pending = PendingAction(action, summary, screenshotPath))
                 false
             }
+            SafetyLevel.OncePerCommand -> {
+                val now = System.currentTimeMillis()
+                val sameRecent = s.lastAutoApprovedSummary == summary &&
+                    (now - s.lastAutoApprovedAt) < s.level.windowMs
+                if (sameRecent) {
+                    _state.value = s.copy(lastAutoApprovedAt = now)
+                    true
+                } else {
+                    _state.value = s.copy(pending = PendingAction(action, summary, screenshotPath))
+                    false
+                }
+            }
+            SafetyLevel.Never -> {
+                _state.value = s.copy(
+                    lastAutoApprovedSummary = summary,
+                    lastAutoApprovedAt = System.currentTimeMillis(),
+                )
+                true
+            }
         }
     }
 
     /** User approved the pending action. Clears pending so the next request() can fire. */
     fun confirm() {
-        _state.value = _state.value.copy(pending = null)
+        val s = _state.value
+        _state.value = s.copy(
+            pending = null,
+            lastAutoApprovedSummary = s.pending?.summary ?: s.lastAutoApprovedSummary,
+            lastAutoApprovedAt = if (s.pending != null) System.currentTimeMillis() else s.lastAutoApprovedAt,
+        )
     }
 
     /** User rejected the pending action. Same effect as confirm() — just clears pending. */

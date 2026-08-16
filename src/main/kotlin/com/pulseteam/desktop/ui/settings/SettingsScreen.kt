@@ -89,7 +89,7 @@ fun SettingsScreen(
     userEmail: String? = null,
     onSignOut: () -> Unit = {},
     onUnlockSync: () -> Unit = {},
-    modelsRepo: ModelsRepository? = null,
+    modelsRepo: ModelsRepository,
     runtimeDownloader: RuntimeDownloader? = null,
     whisper: WhisperTranscriber? = null,
     desktop: DesktopController? = null,
@@ -364,7 +364,7 @@ private fun AccountPanel(userEmail: String?, onSignOut: () -> Unit, onUnlockSync
 @Composable
 private fun ModelsPanel(
     onChange: () -> Unit,
-    modelsRepo: ModelsRepository? = null,
+    modelsRepo: ModelsRepository,
     runtimeDownloader: RuntimeDownloader? = null,
     whisper: WhisperTranscriber? = null,
 ) {
@@ -385,15 +385,9 @@ private fun ModelsPanel(
         Text("Active model", color = PulseColors.FgDim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(4.dp))
 
-        if (modelsRepo == null) {
-            // Fallback: legacy hardcoded list (only if ModelsRepository wasn't passed in)
-            Text(
-                "Models catalog not loaded yet. Restart Pulse to see real state.",
-                color = PulseColors.FgDim,
-                fontSize = 11.sp,
-            )
-            return
-        }
+        // modelsRepo is always wired from Main.kt; this panel would not
+        // render without it, so the previous "catalog not loaded" stub
+        // branch is dead code.
 
         val entries by modelsRepo.entries().collectAsState()
         val serverState by modelsRepo.server().collectAsState()
@@ -907,17 +901,33 @@ private fun DesktopPanel(
             },
         )
 
-        // Safety level — locked at AlwaysConfirm in MVP
+        // Safety level — user picks the policy
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .border(1.dp, PulseColors.Border, RectangleShape)
                 .background(PulseColors.Bg2, RectangleShape)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+                .clickable {
+                    val next = when (settings.safetyLevel) {
+                        com.pulseteam.desktop.data.desktop.SafetyLevel.AlwaysConfirm -> com.pulseteam.desktop.data.desktop.SafetyLevel.OncePerCommand
+                        com.pulseteam.desktop.data.desktop.SafetyLevel.OncePerCommand -> com.pulseteam.desktop.data.desktop.SafetyLevel.Never
+                        com.pulseteam.desktop.data.desktop.SafetyLevel.Never -> com.pulseteam.desktop.data.desktop.SafetyLevel.AlwaysConfirm
+                    }
+                    AppSettingsStore.update { it.copy(safetyLevel = next) }
+                    onChange()
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Safety level", color = PulseColors.Fg, fontSize = 12.sp, modifier = Modifier.weight(1f))
-            Text("Always confirm", color = PulseColors.FgDim, fontSize = 12.sp, style = MonoStyle)
+            val label = when (settings.safetyLevel) {
+                com.pulseteam.desktop.data.desktop.SafetyLevel.AlwaysConfirm -> "Always confirm"
+                com.pulseteam.desktop.data.desktop.SafetyLevel.OncePerCommand -> "Once per command (5 min)"
+                com.pulseteam.desktop.data.desktop.SafetyLevel.Never -> "Never (advanced)"
+            }
+            Text(label, color = PulseColors.FgDim, fontSize = 12.sp, style = MonoStyle)
+            Spacer(Modifier.width(4.dp))
+            Text("▾", color = PulseColors.FgDim, fontSize = 12.sp)
         }
 
         // Vision model picker
@@ -981,6 +991,9 @@ private fun DesktopPanel(
         // Engine status rows
         if (desktop != null) {
             Spacer(Modifier.height(8.dp))
+            val isMac = remember {
+                System.getProperty("os.name")?.lowercase()?.contains("mac") == true
+            }
             var refreshTick by remember { mutableStateOf(0) }
             // Reading refreshTick inside the status rows makes Compose
             // re-evaluate them on Re-check.
@@ -1011,6 +1024,145 @@ private fun DesktopPanel(
             EngineStatusRow("Screen capture", screenAvail, "ok")
             EngineStatusRow("OCR (tesseract)", ocrAvail, ocrMsg)
             EngineStatusRow("PC interaction", pcAvail, if (pcAvail) "ok" else "unavailable")
+
+            // macOS: the system requires explicit Accessibility permission
+            // for any process to control the screen / mouse / keyboard.
+            // Without it, Robot methods silently no-op. We surface a
+            // clear hint + a button to open the right System Settings pane.
+            if (isMac && !pcAvail) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, PulseColors.Warn, RectangleShape)
+                        .background(PulseColors.Bg2, RectangleShape)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "macOS: grant Accessibility permission in System Settings → Privacy & Security → Accessibility, then click Re-check.",
+                        color = PulseColors.Warn,
+                        fontSize = 10.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(PulseColors.Bg3, RectangleShape)
+                            .border(1.dp, PulseColors.Border, RectangleShape)
+                            .clickable {
+                                // Apple URL scheme that opens the
+                                // Accessibility pane directly.
+                                try {
+                                    java.awt.Desktop.getDesktop()
+                                        .browse(java.net.URI("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"))
+                                } catch (_: Throwable) {
+                                    // No-op; some macOS versions reject
+                                    // the URL scheme if Pulse isn't
+                                    // already trusted.
+                                }
+                            }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text("Open System Settings", color = PulseColors.Fg, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // If OCR is missing on this host, give the user a one-click
+            // way to copy the install command. On macOS we can also
+            // auto-trigger `brew install tesseract` (no sudo needed);
+            // on Linux/Windows we just copy the command so the user
+            // can paste it into their shell.
+            if (!ocrAvail) {
+                Spacer(Modifier.height(8.dp))
+                val isMac = remember {
+                    System.getProperty("os.name")?.lowercase()?.contains("mac") == true
+                }
+                val isWin = remember {
+                    System.getProperty("os.name")?.lowercase()?.contains("win") == true
+                }
+                val installCmd = when {
+                    isMac -> "brew install tesseract"
+                    isWin -> "winget install UB-Mannheim.tesseract"
+                    else -> "sudo apt install tesseract-ocr"
+                }
+                val installHint = when {
+                    isMac -> "Run via Homebrew (no sudo). Pulse will ask before launching."
+                    isWin -> "Winget is bundled with Windows 10/11. Paste into PowerShell."
+                    else -> "Requires sudo. Paste into a terminal and authenticate."
+                }
+                Text(installHint, color = PulseColors.FgDim, fontSize = 10.sp)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        installCmd,
+                        color = PulseColors.Fg,
+                        fontSize = 11.sp,
+                        style = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(PulseColors.Accent, RectangleShape)
+                            .border(1.dp, PulseColors.Border, RectangleShape)
+                            .clickable {
+                                // Copy the install command to the system
+                                // clipboard so the user can paste it
+                                // into their shell.
+                                val cb = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                                cb.setContents(java.awt.datatransfer.StringSelection(installCmd), null)
+                            }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text("Copy", color = PulseColors.Bg, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    if (isMac) {
+                        Spacer(Modifier.width(8.dp))
+                        val scope = androidx.compose.runtime.rememberCoroutineScope()
+                        var installing by remember { mutableStateOf(false) }
+                        Box(
+                            modifier = Modifier
+                                .background(if (installing) PulseColors.Bg else PulseColors.Bg3, RectangleShape)
+                                .border(1.dp, PulseColors.Border, RectangleShape)
+                                .clickable(enabled = !installing) {
+                                    installing = true
+                                    scope.launch {
+                                        try {
+                                            // Auto-install on macOS via brew.
+                                            // No sudo needed; brew is the
+                                            // user-space package manager.
+                                            val pb = ProcessBuilder("brew", "install", "tesseract")
+                                                .redirectErrorStream(true)
+                                            val proc = pb.start()
+                                            proc.inputStream.bufferedReader().use { it.readText() }
+                                            proc.waitFor(5, java.util.concurrent.TimeUnit.MINUTES)
+                                        } catch (_: Throwable) {
+                                            // best-effort; the user can
+                                            // Re-check manually.
+                                        } finally {
+                                            desktop.recheckEngines()
+                                            refreshTick++
+                                            installing = false
+                                        }
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                if (installing) "Installing…" else "Auto-install (macOS)",
+                                color = if (installing) PulseColors.FgDim else PulseColors.Fg,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

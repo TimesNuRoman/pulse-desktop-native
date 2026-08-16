@@ -75,4 +75,37 @@ class SafetyGateTest {
         g.configure(true, SafetyLevel.AlwaysConfirm)
         assertTrue(g.state.value.enabled)
     }
+
+    @Test
+    fun `Never level allows all actions without populating pending`() {
+        val g = SafetyGate()
+        g.configure(true, SafetyLevel.Never)
+        val allowed = g.request(DesktopAction.Click(0, 0), "x")
+        assertTrue(allowed)
+        assertNull(g.state.value.pending)
+        assertEquals("x", g.state.value.lastAutoApprovedSummary)
+    }
+
+    @Test
+    fun `OncePerCommand allows same summary within window`() {
+        val g = SafetyGate()
+        g.configure(true, SafetyLevel.OncePerCommand)
+        // First call: not seen before, so requires confirmation.
+        assertFalse(g.request(DesktopAction.Click(0, 0), "Click at (0, 0)"))
+        g.confirm()
+        // Second call with the SAME summary: auto-approved (within 5 min).
+        val second = g.request(DesktopAction.Click(0, 0), "Click at (0, 0)")
+        assertTrue(second, "same summary within window should auto-approve")
+    }
+
+    @Test
+    fun `OncePerCommand asks for new summary`() {
+        val g = SafetyGate()
+        g.configure(true, SafetyLevel.OncePerCommand)
+        g.request(DesktopAction.Click(100, 200), "Click at (100, 200)")
+        g.confirm()
+        // Different summary → requires a new confirm.
+        val second = g.request(DesktopAction.Click(300, 400), "Click at (300, 400)")
+        assertFalse(second)
+    }
 }
