@@ -64,33 +64,53 @@ class UpdateChecker(
         try {
             val text = fetch(manifestUrl)
             val manifest = parse(text) ?: return@withContext UpdateStatus.Failed("manifest: empty or invalid JSON")
-            val os = detectOs()
-            val pkg = manifest.optJSONObject(os) ?: return@withContext UpdateStatus.UpToDate(currentVersion)
-            val latest = manifest.optString("version", "")
-            val url = pkg.optString("url", "")
-            val sha256 = pkg.optString("sha256", "")
-            val size = pkg.optLong("size", 0L)
-            val notes = manifest.optString("releaseNotes", "")
-            if (latest.isBlank() || url.isBlank()) {
-                return@withContext UpdateStatus.Failed("manifest: missing version or url for $os")
-            }
-            if (compareVersions(latest, currentVersion) <= 0) {
-                return@withContext UpdateStatus.UpToDate(currentVersion)
-            }
-            UpdateStatus.Available(
-                UpdateInfo(
-                    version = latest,
-                    url = url,
-                    sha256 = sha256,
-                    sizeBytes = size,
-                    releaseNotes = notes,
-                )
-            )
+            decide(manifest, currentVersion, detectOs())
+        } catch (t: ManifestUnavailableException) {
+            // 404 / DNS failure / TLS error: the manifest isn't published yet
+            // (or the network is offline). This is expected on first release
+            // — treat as up-to-date and log at INFO, not WARN. Real failure
+            // modes (HTTP 500, parse error) still surface as UpdateStatus.Failed.
+            PulseLogger.info("Update check skipped (manifest unavailable)",
+                mapOf("url" to manifestUrl, "err" to t.message))
+            UpdateStatus.UpToDate(currentVersion)
         } catch (t: Throwable) {
             PulseLogger.warn("Update check failed", mapOf("err" to t.message))
             UpdateStatus.Failed(t.message ?: t::class.java.simpleName)
         }
     }
+
+    /**
+     * Pure function: turn a parsed manifest into an [UpdateStatus]. Extracted
+     * from [check] so it can be unit-tested without an HTTP layer. Visible
+     * to tests via `internal` (same module).
+     */
+    internal fun decide(manifest: org.json.JSONObject, currentVersion: String, os: String): UpdateStatus {
+        val pkg = manifest.optJSONObject(os) ?: return UpdateStatus.UpToDate(currentVersion)
+        val latest = manifest.optString("version", "")
+        val url = pkg.optString("url", "")
+        val sha256 = pkg.optString("sha256", "")
+        val size = pkg.optLong("size", 0L)
+        val notes = manifest.optString("releaseNotes", "")
+        if (latest.isBlank() || url.isBlank()) {
+            return UpdateStatus.Failed("manifest: missing version or url for $os")
+        }
+        if (compareVersions(latest, currentVersion) <= 0) {
+            return UpdateStatus.UpToDate(currentVersion)
+        }
+        return UpdateStatus.Available(
+            UpdateInfo(
+                version = latest,
+                url = url,
+                sha256 = sha256,
+                sizeBytes = size,
+                releaseNotes = notes,
+            )
+        )
+    }
+
+    /** Thrown by [fetch] when the manifest is not reachable. Distinct from
+     *  HTTP 5xx (server problem) — those bubble out of [check] as Failed. */
+    private class ManifestUnavailableException(message: String) : RuntimeException(message)
 
     /**
      * Open the URL in the system browser. We do this from a coroutine
@@ -146,6 +166,13 @@ class UpdateChecker(
         val code = conn.responseCode
         if (code !in 200..299) {
             conn.disconnect()
+            // 404 (no manifest yet), 5xx (server problem), network errors all
+            // surface here. 404 is "expected" until we publish; 5xx is a real
+            // issue. We split at the caller: 404 → ManifestUnavailableException
+            // (treated as up-to-date), everything else → Failed.
+            if (code == 404) {
+                throw ManifestUnavailableException("HTTP 404 (no manifest published)")
+            }
             throw RuntimeException("manifest HTTP $code")
         }
         val text = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }

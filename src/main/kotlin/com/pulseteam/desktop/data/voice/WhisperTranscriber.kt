@@ -192,7 +192,12 @@ class WhisperTranscriber {
             listener?.onProgress("model", frac, "Downloading model… ${(frac * 100).toInt()}%")
         }
         // Atomic rename so we never have a half-written model on success.
-        Files.move(modelPartial.toPath(), modelFile.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        // We use REPLACE_EXISTING (not ATOMIC_MOVE) because on Windows, the
+        // first-time move into a file that may be briefly held by an indexer
+        // / antivirus can fail with AccessDeniedException. REPLACE_EXISTING
+        // is more forgiving; the .partial file is fully flushed before this
+        // call so the data is intact.
+        Files.move(modelPartial.toPath(), modelFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
         PulseLogger.info("Whisper model installed", mapOf("file" to modelFile.absolutePath, "bytes" to modelFile.length()))
     }
 

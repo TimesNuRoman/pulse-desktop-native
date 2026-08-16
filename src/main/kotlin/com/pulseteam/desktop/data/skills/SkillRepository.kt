@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -160,14 +161,45 @@ class SkillRepository {
 
     private suspend fun persist(list: List<Skill>) = withContext(Dispatchers.IO) {
         writeMutex.withLock {
-            runCatching {
-                Files.createDirectories(file.parent)
-                val tmp = file.parent.resolve("skills.json.tmp")
-                Files.writeString(tmp, encode(list))
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-            }.onFailure { t ->
-                PulseLogger.error("SkillRepository: failed to persist skills.json", t)
+            // On Windows, two rapid commits can race when the first write's
+            // ATOMIC_MOVE has not yet fully released the target file handle
+            // (Windows Defender indexer / file lock from a parallel reader
+            // can both hold it briefly). A unique temp filename + REPLACE_EXISTING
+            // (no ATOMIC_MOVE) + a small retry loop makes this reliable in
+            // practice. We try up to 3 times before giving up; each retry uses
+            // a fresh temp name to avoid stale-file collisions.
+            var attempt = 0
+            var lastError: Throwable? = null
+            while (attempt < 3) {
+                attempt++
+                val tmp = file.parent.resolve("skills.json.tmp.${System.nanoTime()}")
+                try {
+                    Files.createDirectories(file.parent)
+                    Files.writeString(tmp, encode(list))
+                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING)
+                    // Clean up any leftover tmp files from a prior interrupted
+                    // write. We do this AFTER the successful move so we never
+                    // delete the current tmp mid-write.
+                    runCatching {
+                        Files.newDirectoryStream(file.parent, "skills.json.tmp.*").use { stream ->
+                            stream.forEach { p -> if (p != tmp) runCatching { Files.deleteIfExists(p) } }
+                        }
+                    }
+                    return@withContext
+                } catch (t: AccessDeniedException) {
+                    lastError = t
+                    // Brief pause then retry with a fresh temp file.
+                    runCatching { Files.deleteIfExists(tmp) }
+                    Thread.sleep(50L * attempt)
+                } catch (t: Throwable) {
+                    lastError = t
+                    runCatching { Files.deleteIfExists(tmp) }
+                    // Non-retryable: don't loop.
+                    break
+                }
             }
+            PulseLogger.error("SkillRepository: failed to persist skills.json after $attempt attempts",
+                lastError, mapOf("file" to file.toString()))
         }
     }
 
