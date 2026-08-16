@@ -64,6 +64,7 @@ fun Topbar(
     onOpenPalette: () -> Unit,
     onOpenSettings: () -> Unit,
     onSyncNow: () -> Unit = {},
+    onShowLastEvent: () -> Unit = {},
     lastEvent: String? = null,
     updateInfo: UpdateInfo? = null,
     onDownloadUpdate: (() -> Unit)? = null,
@@ -86,8 +87,13 @@ fun Topbar(
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Brand
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Brand — clickable: opens the command palette. Saves a
+            // keyboard shortcut for the muscle-memory crowd.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clickable { onOpenPalette() },
+            ) {
                 Box(
                     modifier = Modifier
                         .size(22.dp)
@@ -119,13 +125,16 @@ fun Topbar(
 
             Spacer(Modifier.weight(1f))
 
-            // Search field (faux — real search opens a separate screen)
+            // Search field — clickable: opens the command palette. The
+            // visible "Search…" text + Kbd("Ctrl K") hint doubles as a
+            // keyboard-shortcut reminder.
             Row(
                 modifier = Modifier
                     .width(280.dp)
                     .height(28.dp)
                     .border(1.dp, PulseColors.Border, RectangleShape)
                     .background(PulseColors.BgInput, RectangleShape)
+                    .clickable { onOpenPalette() }
                     .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -172,15 +181,26 @@ fun Topbar(
                 onClick = onSyncNow,
             )
             Spacer(Modifier.width(8.dp))
-            TopbarAction(icon = Icons.Default.Notifications, contentDescription = "Notifications")
+            // Notifications button — surfaces the most recent event
+            // (sync / screenshot / hotkey status). Real notifications land
+            // when we have a backend; for now this gives the user a
+            // visible affordance instead of a silent icon.
+            TopbarAction(
+                icon = Icons.Default.Notifications,
+                contentDescription = "Recent events${if (lastEvent != null) " — $lastEvent" else ""}",
+                onClick = onShowLastEvent,
+            )
             Spacer(Modifier.width(8.dp))
             TopbarAction(icon = Icons.Default.Settings, contentDescription = "Settings", onClick = onOpenSettings)
             Spacer(Modifier.width(12.dp))
-            // Avatar (small square with initial)
+            // Avatar — clickable, opens Settings → Account so the user
+            // can see their email / sign out / re-unlock sync without
+            // hunting through the tabs.
             Box(
                 modifier = Modifier
                     .size(24.dp)
-                    .background(PulseColors.Accent2, RectangleShape),
+                    .background(PulseColors.Accent2, RectangleShape)
+                    .clickable { onOpenSettings() },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(

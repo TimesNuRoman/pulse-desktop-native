@@ -5,6 +5,7 @@ package com.pulseteam.desktop.ui.notes
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +52,7 @@ fun NoteEditorScreen(
     note: Note,
     onClose: () -> Unit,
     onUpdate: (title: String, body: String) -> Unit,
+    onOpenNoteByTitle: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var titleField by remember(note.id) { mutableStateOf(TextFieldValue(note.title)) }
@@ -94,6 +96,7 @@ fun NoteEditorScreen(
                 modifier = Modifier
                     .background(PulseColors.Bg3, RectangleShape)
                     .border(1.dp, PulseColors.Border, RectangleShape)
+                    .clickable { onClose() }
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             ) {
                 Text("Esc close", color = PulseColors.Fg, fontSize = 11.sp, style = MonoStyle)
@@ -160,7 +163,7 @@ fun NoteEditorScreen(
                     .fillMaxWidth()
                     .background(PulseColors.Bg2)
                     .padding(horizontal = 24.dp, vertical = 8.dp),
-                onLinkClick = { title -> onUpdate("", "") /* v2: open note by title */ },
+                onLinkClick = { title -> onOpenNoteByTitle(title) },
             )
         }
 

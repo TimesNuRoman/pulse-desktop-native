@@ -155,6 +155,18 @@ class ChatViewModel(
         streamJob = null
     }
 
+    /**
+     * Reset the conversation: clear messages, cancel any in-flight stream,
+     * drop the web-search status pill. Used by the sidebar "New chat" button
+     * and the palette `New chat` action — both previously set only the chatId
+     * and left the old messages on screen.
+     */
+    fun newChat() {
+        cancel()
+        _messages.value = emptyList()
+        _webStatus.value = null
+    }
+
     fun shutdown() {
         cancel()
         scope.cancel()

@@ -161,6 +161,16 @@ fun main() = application {
     var isWebSearchOn by remember { mutableStateOf(false) }
     var lastEvent by remember { mutableStateOf<String?>(null) }
 
+    // Single source of truth for "sync now" — both the topbar Sync button
+    // and the Notifications button share this so they always trigger the
+    // same end-to-end encrypted round-trip.
+    val triggerSync: () -> Unit = {
+        scope.launch {
+            val pw = PasswordCache.get() ?: return@launch
+            try { syncEngine.fullSync(pw, authSession.token ?: "") } finally { pw.fill('\u0000') }
+        }
+    }
+
     val notesViewModel = remember(authSession) { NotesViewModel(syncEngine = syncEngine, authSession = authSession) }
     val notes by notesViewModel.notes.collectAsState()
     val openNote by notesViewModel.openNote.collectAsState()
@@ -350,6 +360,11 @@ fun main() = application {
                             onOpenNoteByTitle = { notesViewModel.openByTitle(it) },
                             onOpenSettings = { settingsOpen = true },
                             onOpenPalette = { paletteOpen = true },
+                            onSyncNow = triggerSync,
+                            // Notifications button: trigger sync so the
+                            // topbar's lastEvent updates with a real
+                            // "Synced Xs ago" / "Sync in progress…" line.
+                            onShowLastEvent = triggerSync,
                             chatViewModel = chatViewModel,
                             userEmail = session?.user?.email,
                             syncStatus = syncState,
@@ -394,12 +409,6 @@ fun main() = application {
                                 isWebSearchOn = want
                                 lastEvent = if (want) "Web search: ON" else "Web search: OFF"
                             },
-                            onSyncNow = {
-                                scope.launch {
-                                    val pw = PasswordCache.get() ?: return@launch
-                                    try { syncEngine.fullSync(pw, authSession.token ?: "") } finally { pw.fill('\u0000') }
-                                }
-                            },
                             lastEvent = lastEvent,
                             updateInfo = (updateStatus as? UpdateStatus.Available)?.info,
                             onDownloadUpdate = {
@@ -417,6 +426,8 @@ fun main() = application {
                             onOpenNoteByTitle = { notesViewModel.openByTitle(it) },
                             onOpenSettings = { settingsOpen = true },
                             onOpenPalette = { paletteOpen = true },
+                            onSyncNow = triggerSync,
+                            onShowLastEvent = triggerSync,
                             chatViewModel = chatViewModel,
                             userEmail = session?.user?.email,
                             syncStatus = syncState,
@@ -460,12 +471,6 @@ fun main() = application {
                                 isWebSearchOn = want
                                 lastEvent = if (want) "Web search: ON" else "Web search: OFF"
                             },
-                            onSyncNow = {
-                                scope.launch {
-                                    val pw = PasswordCache.get() ?: return@launch
-                                    try { syncEngine.fullSync(pw, authSession.token ?: "") } finally { pw.fill('\u0000') }
-                                }
-                            },
                             lastEvent = lastEvent,
                             updateInfo = (updateStatus as? UpdateStatus.Available)?.info,
                             onDownloadUpdate = {
@@ -477,6 +482,7 @@ fun main() = application {
                                     note = openNote!!,
                                     onClose = { notesViewModel.close() },
                                     onUpdate = { title, body -> notesViewModel.updateNote(openNote!!.id, title, body) },
+                                    onOpenNoteByTitle = { title -> notesViewModel.openByTitle(title) },
                                     modifier = Modifier.weight(1f).fillMaxHeight(),
                                 )
                             },
@@ -493,8 +499,10 @@ fun main() = application {
                                         settingsOpen = true
                                     is PaletteAction.OpenSkills ->
                                         skillsOpen = true
-                                    is PaletteAction.NewChat ->
-                                        selectedChatId = "chat-${System.currentTimeMillis()}"
+                                    is PaletteAction.NewChat -> {
+                                        selectedChatId = "welcome"
+                                        chatViewModel.newChat()
+                                    }
                                     is PaletteAction.NewNote ->
                                         notesViewModel.createNote()
                                     is PaletteAction.OpenNote -> {

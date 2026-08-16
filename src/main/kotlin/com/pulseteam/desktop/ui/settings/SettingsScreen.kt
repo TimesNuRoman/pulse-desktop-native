@@ -20,7 +20,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Memory
@@ -241,7 +244,20 @@ private fun SettingsNav(
                 .padding(horizontal = 8.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
-            Text(if (filter.isEmpty()) "Search settings\u2026" else filter, color = if (filter.isEmpty()) PulseColors.FgDim else PulseColors.Fg, fontSize = 12.sp)
+            BasicTextField(
+                value = filter,
+                onValueChange = { filter = it },
+                singleLine = true,
+                textStyle = TextStyle(color = PulseColors.Fg, fontSize = 12.sp),
+                cursorBrush = SolidColor(PulseColors.Accent),
+                modifier = Modifier.fillMaxWidth(),
+                decorationBox = { inner ->
+                    if (filter.isEmpty()) {
+                        Text("Search settings\u2026", color = PulseColors.FgDim, fontSize = 12.sp)
+                    }
+                    inner()
+                },
+            )
         }
         Spacer(Modifier.height(8.dp))
         SettingsSection.entries

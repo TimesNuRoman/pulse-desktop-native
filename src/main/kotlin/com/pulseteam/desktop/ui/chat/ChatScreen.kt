@@ -84,6 +84,7 @@ fun ChatScreen(
     onAttachFile: () -> Unit = {},
     onToggleWeb: (Boolean) -> Unit = { _ -> },
     onSyncNow: () -> Unit = {},
+    onShowLastEvent: () -> Unit = {},
     lastEvent: String? = null,
     updateInfo: com.pulseteam.desktop.data.update.UpdateInfo? = null,
     onDownloadUpdate: (() -> Unit)? = null,
@@ -96,6 +97,7 @@ fun ChatScreen(
             onOpenPalette = onOpenPalette,
             onOpenSettings = onOpenSettings,
             onSyncNow = onSyncNow,
+            onShowLastEvent = onShowLastEvent,
             lastEvent = lastEvent,
             updateInfo = updateInfo,
             onDownloadUpdate = onDownloadUpdate,
@@ -109,7 +111,11 @@ fun ChatScreen(
                 modifier = Modifier.width(260.dp).fillMaxHeight(),
                 selectedId = selectedNoteId,
                 onSelect = onSelectNote,
-                onNewChat = { /* v2: ChatViewModel.newChat */ },
+                onNewChat = {
+                    // Clear the conversation in-place. The chatId is the same
+                    // "welcome" session; the user is signalling "start over".
+                    chatViewModel.newChat()
+                },
                 onNewNote = onNewNote,
                 onOpenSettings = onOpenSettings,
                 notes = notes,
